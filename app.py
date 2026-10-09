@@ -190,7 +190,7 @@ with replay:
 
 with station_tab:
     s = stations()
-    s = s[(s["city"] == city) & (s["date"] > s["date"].max() - pd.Timedelta(days=7))].sort_values("date").groupby("station").last().reset_index()
+    s = s[(s["city"] == city) & (s["date"] > s["date"].max() - pd.Timedelta(days=7))].sort_values("date").drop_duplicates("station", keep="last")
     s["Category"] = s["aqi"].map(lambda v: category(v)[0])
     s["colour"] = s["aqi"].map(lambda v: category(v)[1])
     st.subheader(f"Stations in {city}, latest reading in the past week")
