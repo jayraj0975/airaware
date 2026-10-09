@@ -3,7 +3,7 @@
 import os
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from airaware.aqi import HEALTH_GROUPS
@@ -175,11 +175,19 @@ def update_profile(body: Profile, user: dict = Depends(require_user)):
     return auth.public_user(db.one("SELECT * FROM users WHERE id = ?", (user["id"],)))
 
 
+def recheck_password(user: dict, password: str) -> bool:
+    """Checks the password again for a sensitive change. Capped per account: each check costs a scrypt hash (on
+    purpose slow and memory-hungry), so unlimited checks would let one signed-in session load the server or guess."""
+    if not db.take("recheck", str(user["id"]), 5, 15):
+        raise HTTPException(429, "Too many password checks. Wait 15 minutes and try again.")
+    return auth.verify_password(password, user["pw_hash"])
+
+
 @router.post("/me/password")
 def change_password(body: PasswordChange, request: Request, response: Response, user: dict = Depends(require_user)):
-    if not auth.verify_password(body.current, user["pw_hash"]):
-        raise HTTPException(403, "Your current password is not right.")
     auth.check_new_password(body.new)
+    if not recheck_password(user, body.current):
+        raise HTTPException(403, "Your current password is not right.")
     db.run("UPDATE users SET pw_hash = ? WHERE id = ?", (auth.hash_password(body.new), user["id"]))
     auth.end_all_sessions(user["id"])  # sign out every other device
     auth.start_session(response, user["id"], request)
@@ -190,7 +198,7 @@ def change_password(body: PasswordChange, request: Request, response: Response, 
 @router.delete("/me")
 def delete_account(body: SignIn, request: Request, response: Response, user: dict = Depends(require_user)):
     """Deletes the account and everything it owns. Needs the password again; reports stay, without the author."""
-    if body.email.strip().lower() != user["email"].lower() or not auth.verify_password(body.password, user["pw_hash"]):
+    if body.email.strip().lower() != user["email"].lower() or not recheck_password(user, body.password):
         raise HTTPException(403, "Email or password is not right.")
     db.audit("user.deleted", None, f"user {user['id']} deleted their account", client_ip(request))
     db.run("DELETE FROM users WHERE id = ?", (user["id"],))

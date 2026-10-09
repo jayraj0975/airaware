@@ -309,6 +309,15 @@ def test_password_reset_by_admin_link(app):
     assert client(app).post("/api/auth/login", json={"email": "forgetful@example.com", "password": "new-password-2"}, headers=H).status_code == 200
 
 
+def test_password_change_voids_outstanding_reset_links(app):
+    c = client(app)
+    signup(c, "careful@example.com", password="first-password")
+    uid = db.one("SELECT id FROM users WHERE email = ?", ("careful@example.com",))["id"]
+    leaked = auth.new_reset_token(uid, hours=24)
+    c.post("/api/me/password", json={"current": "first-password", "new": "second-password"}, headers=H)
+    assert auth.use_reset_token(leaked) is None
+
+
 def test_reset_tokens_expire_and_are_replaced():
     uid = db.run("INSERT INTO users (email, name, pw_hash, created_at) VALUES ('exp@example.com', 'E', 'x', ?)", (db.now(),))
     first = auth.new_reset_token(uid, hours=1)
@@ -316,3 +325,29 @@ def test_reset_tokens_expire_and_are_replaced():
     assert auth.use_reset_token(first) is None and auth.use_reset_token(second) == uid  # a new link voids the old one
     old = auth.new_reset_token(uid, hours=-1)
     assert auth.use_reset_token(old) is None
+
+
+def test_backups_are_complete_and_rotated(app):
+    import sqlite3
+    f = db.backup()
+    with sqlite3.connect(f) as con:
+        assert con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == db.one("SELECT COUNT(*) AS n FROM users")["n"]
+    for day in range(1, 10):  # nine more days of backups: only the newest seven survive
+        (f.parent / f"airaware-2000-01-{day:02d}.db").write_bytes(b"")
+    db.backup(keep=7)
+    assert len(list(f.parent.glob("airaware-*.db"))) == 7 and f.exists()
+
+    boss = client(app)
+    signup(boss, "backup-admin@example.com")
+    manage.main(["make-admin", "backup-admin@example.com"])
+    r = boss.post("/api/admin/backup", headers=H)
+    assert r.status_code == 200 and r.content[:16] == b"SQLite format 3\x00"
+    assert client(app).post("/api/admin/backup", headers=H).status_code == 401
+
+
+def test_password_rechecks_are_capped_per_account(app):
+    c = client(app)
+    signup(c, "hammer@example.com", password="real-password")
+    codes = [c.post("/api/me/password", json={"current": "wrong-guess", "new": "another-pass"}, headers=H).status_code for _ in range(6)]
+    assert codes == [403] * 5 + [429]
+    assert c.request("DELETE", "/api/me", json={"email": "hammer@example.com", "password": "real-password"}, headers=H).status_code == 429

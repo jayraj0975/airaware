@@ -56,6 +56,8 @@ DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as
 - Reports: moderation queue on a map, approve or reject.
 - Data & jobs: every startup, scheduled and manual rebuild with its result; **Rebuild data now**; the health of each
   station (days reporting, agreement with its city).
+- Backups: the database is copied every day to `data/backups/` (the newest 7 are kept), and admins can download a
+  fresh copy (`POST /api/admin/backup`, audited).
 - Audit log: sign-ups, sign-ins, failed sign-ins, admin actions.
 
 ## Architecture
@@ -87,8 +89,11 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
   lookups are limited per visitor (30 a minute) and calls to outside services are rate-capped.
 - Admins are made only from the server command line, never by signing up with a particular email.
 - Password resets: one-time links (an hour by email, a day from an admin), stored only as hashes, voided by a newer
-  link, and carried after `#` so they never reach server logs. "Forgot password" answers the same whether or not the
-  email has an account. Emailed links use AIRAWARE_PUBLIC_URL, never the request's Host header.
+  link, and carried after `#` so they never reach server logs. "Forgot password" answers the same, in the same time,
+  whether or not the email has an account (the work happens after the reply). Emailed links use AIRAWARE_PUBLIC_URL,
+  never the request's Host header. Changing a password or disabling an account voids outstanding links and sessions.
+- Re-entering a password for a sensitive change (new password, account deletion) is capped at 5 tries per 15 minutes
+  per account, since each check is a deliberately expensive scrypt hash.
 - Security headers (CSP, frame denial, nosniff).
 - Per-user ownership checks on every place, alert and notification. The container runs as a non-root user.
 
@@ -112,7 +117,7 @@ grants admin on sign-up because it does not verify email ownership):
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
 cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
-.venv/bin/python -m pytest                                         # 30 tests
+.venv/bin/python -m pytest                                         # 33 tests
 ```
 
 | Setting | Default | |

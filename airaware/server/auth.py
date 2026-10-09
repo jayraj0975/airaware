@@ -81,7 +81,10 @@ def end_session(request: Request, response: Response) -> None:
 
 
 def end_all_sessions(user_id: int) -> None:
+    """Signs the user out everywhere and voids any reset link still outstanding: called whenever the password
+    changes or the account is disabled, so no older credential survives."""
     db.run("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    db.run("UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL", (db.now(), user_id))
 
 
 def client_ip(request: Request) -> str:

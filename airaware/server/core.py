@@ -231,8 +231,12 @@ def pull_live(state: State) -> str:
 
 def refresher(state: State):
     last_build = time.time()
+    last_backup = ""
     while True:
         time.sleep(LIVE_MINUTES * 60)
+        today = date.today().isoformat()
+        if today != last_backup and run_job("daily backup", lambda: f"saved {db.backup().name}"):
+            last_backup = today
         if os.environ.get("OPENAQ_API_KEY"):
             run_job("live readings", lambda: pull_live(state))
         if time.time() - last_build >= REBUILD_HOURS * 3600:

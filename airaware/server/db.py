@@ -177,3 +177,20 @@ def take(action: str, key: str, limit: int, minutes: int) -> bool:
 
 def audit(action: str, user_id: int | None = None, detail: str = "", ip: str | None = None) -> None:
     run("INSERT INTO audit (at, user_id, action, detail, ip) VALUES (?, ?, ?, ?, ?)", (now(), user_id, action, detail[:500], ip))
+
+
+def backup(keep: int = 7) -> Path:
+    """Copies the live database to data/backups/airaware-YYYY-MM-DD.db with SQLite's online backup (safe while the
+    site runs), and keeps only the newest `keep` copies."""
+    folder = path().parent / "backups"
+    folder.mkdir(exist_ok=True)
+    target = folder / f"airaware-{datetime.now(timezone.utc):%Y-%m-%d}.db"
+    src, dst = sqlite3.connect(path()), sqlite3.connect(target)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    for old in sorted(folder.glob("airaware-*.db"))[:-keep]:
+        old.unlink()
+    return target

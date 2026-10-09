@@ -4,6 +4,7 @@ import threading
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from airaware.data import STATIONS
@@ -143,6 +144,14 @@ def refresh(request: Request, admin: dict = Depends(require_admin)):
     threading.Thread(target=run_job, args=("manual rebuild", lambda: rebuild(s)), daemon=True).start()
     db.audit("admin.refresh", admin["id"], "", client_ip(request))
     return {"started": True}
+
+
+@router.post("/backup")
+def backup_now(request: Request, admin: dict = Depends(require_admin)):
+    """Makes a backup now and sends it. It holds every account (password hashes included), so it is audited."""
+    f = db.backup()
+    db.audit("admin.backup_download", admin["id"], f.name, client_ip(request))
+    return FileResponse(f, media_type="application/x-sqlite3", filename=f.name)
 
 
 @router.get("/audit")
