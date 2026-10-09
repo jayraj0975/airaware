@@ -229,22 +229,21 @@ def pull_live(state: State) -> str:
     return f"{len(readings)} stations live"
 
 
-STALE_DAYS = 2  # the archive is usually 4-5 days behind; older than that means a refresh is overdue
-
-
-def data_is_stale(state: State) -> bool:
-    with state.lock:
-        newest = state.daily.dropna(subset=["aqi"])["date"].max()
-    return (pd.Timestamp(date.today()) - newest).days > 4 + STALE_DAYS
+def hours_since_rebuild() -> float:
+    """Hours since the last successful rebuild (any kind), from the jobs table; infinity if there has never been one."""
+    row = db.one("SELECT MAX(finished_at) AS at FROM jobs WHERE ok = 1 AND kind LIKE '%rebuild%'")
+    if not row or not row["at"]:
+        return float("inf")
+    return (pd.Timestamp.now(tz="UTC") - pd.Timestamp(row["at"])).total_seconds() / 3600
 
 
 def refresher(state: State):
-    """Background loop. If the data is already out of date at startup (frequent restarts can postpone the 6-hourly
-    rebuild indefinitely), it rebuilds within a couple of minutes instead of waiting a full cycle."""
+    """Background loop. The rebuild clock comes from the jobs table, so restarts do not reset it: if a rebuild is
+    already due at startup it runs within a couple of minutes instead of a full cycle later."""
     last_build = time.time()
-    if data_is_stale(state):
+    if hours_since_rebuild() >= REBUILD_HOURS:
         time.sleep(120)  # let startup traffic settle first
-        run_job("startup rebuild (data out of date)", lambda: rebuild(state))
+        run_job("startup rebuild (due)", lambda: rebuild(state))
         last_build = time.time()
     last_backup = ""
     while True:

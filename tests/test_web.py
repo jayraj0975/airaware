@@ -465,3 +465,10 @@ def test_forwarded_address_trusted_only_from_the_proxy(monkeypatch):
     assert auth.client_ip(req("10.0.0.9", {"cf-connecting-ip": "203.0.113.5"})) == "10.0.0.9"  # forged header ignored
     assert auth.via_https(req("172.30.0.20", {"x-forwarded-proto": "https"}))
     assert not auth.via_https(req("10.0.0.9", {"x-forwarded-proto": "https"}))
+
+
+def test_rebuild_clock_survives_restarts(app):
+    db.run("DELETE FROM jobs WHERE kind LIKE '%rebuild%'")
+    assert core.hours_since_rebuild() == float("inf")
+    db.run("INSERT INTO jobs (kind, started_at, finished_at, ok) VALUES ('manual rebuild', ?, ?, 1)", (db.now(), db.now()))
+    assert core.hours_since_rebuild() < 0.1
