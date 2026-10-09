@@ -186,8 +186,10 @@ def area(request: Request, response: Response, lat: float = Query(ge=-90, le=90)
     """Everything about one point: estimated AQI, its forecast, weather now, nearest stations and recent reports."""
     personal(response, user)
     a = state(request).area(lat, lon)
-    if a is None:
-        raise HTTPException(404, "AirAware covers the Pune and Mumbai areas. Pick a spot closer to one of them.")
+    if a is None:  # say how far, and which city is nearest, so the page can offer that city instead of a dead end
+        city, km = live.nearest_city(lat, lon)
+        raise HTTPException(404, {"message": f"That spot is about {km:.0f} km from {city}. AirAware covers the Pune and Mumbai areas, "
+                                             "up to about 60 km from each city.", "outside": True, "nearest_city": city, "km": round(km)})
     fc = a["forecast"]
     rows = forecast_rows(fc, groups_of(user))
     now = forecast_rows(upcoming(fc).head(1), groups_of(user))[0]

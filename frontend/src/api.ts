@@ -52,7 +52,8 @@ export interface Note { id: number; title: string; body: string; created_at: str
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) { super(message); this.status = status }
+  data: Record<string, unknown>
+  constructor(status: number, message: string, data: Record<string, unknown> = {}) { super(message); this.status = status; this.data = data }
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -63,8 +64,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const data = await r.json().catch(() => ({}))
   if (!r.ok) {
     const d = (data as { detail?: unknown }).detail
-    const msg = typeof d === 'string' ? d : Array.isArray(d) ? d.map((x: { msg?: string }) => x.msg).join('; ') : r.statusText
-    throw new ApiError(r.status, msg || `Request failed (${r.status})`)
+    const msg = typeof d === 'string' ? d : Array.isArray(d) ? d.map((x: { msg?: string }) => x.msg).join('; ')
+      : d && typeof d === 'object' && 'message' in d ? String((d as { message: unknown }).message) : r.statusText
+    throw new ApiError(r.status, msg || `Request failed (${r.status})`, d && typeof d === 'object' && !Array.isArray(d) ? d as Record<string, unknown> : {})
   }
   return data as T
 }

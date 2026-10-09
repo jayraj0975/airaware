@@ -186,17 +186,19 @@ function Security() {
   }
   return (
     <Card title={<span id="security">Account and security</span>} hint={`Signed in as ${user!.email}`}>
+      {/* Three separate blocks, never one form around them: Enter in the two-step code box must not submit the
+          password change. */}
       <form className="form" onSubmit={change}>
         <input type="email" autoComplete="username" value={user!.email} readOnly hidden />
         <label>Current password<input type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} /></label>
         <label>New password<input type="password" autoComplete="new-password" minLength={8} value={pw.new} onChange={(e) => setPw({ ...pw, new: e.target.value })} /></label>
         <button className="ghost small" disabled={!pw.current || pw.new.length < 8}>Change password</button>
         {msg && <p className="small">{msg}</p>}
-        <hr />
-        <TwoStep />
-        <hr />
-        <button type="button" className="link danger" onClick={() => setDeleting(true)}>Delete my account</button>
       </form>
+      <hr />
+      <TwoStep />
+      <hr />
+      <button type="button" className="link danger" onClick={() => setDeleting(true)}>Delete my account</button>
       {deleting && <AskDialog title="Delete your account?" label="Your password" type="password" ok="Delete for good" danger
         note="This permanently deletes your account, places, alerts and notifications. Reports you made stay on the map without your name."
         onClose={() => setDeleting(false)} onSubmit={remove} />}
@@ -275,8 +277,9 @@ function TwoStep() {
             <p className="small">1. Scan this with your authenticator app, or <a href={setup.uri}>open it on this phone</a>, or type this key:</p>
             <code className="key">{setup.secret.match(/.{1,4}/g)!.join(' ')}</code>
             <p className="small">2. Enter the 6-digit code it shows:</p>
-            <div className="row-form"><input inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="123 456" value={code} onChange={(e) => setCode(e.target.value)} />
-              <button type="button" className="btn small" disabled={code.replace(/\D/g, '').length !== 6} onClick={enable}>Turn on</button></div>
+            <form className="row-form" onSubmit={(e) => { e.preventDefault(); if (code.replace(/\D/g, '').length === 6) enable() }}>
+              <input inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="123 456" aria-label="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} />
+              <button className="btn small" disabled={code.replace(/\D/g, '').length !== 6}>Turn on</button></form>
           </div>
         </div>
       )}

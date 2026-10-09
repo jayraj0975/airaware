@@ -51,7 +51,8 @@ def test_public_pages_and_api(app):
     assert s["source"] == "archive" and all(st["category"]["name"] for st in s["stations"])
     a = app.get("/api/area?lat=18.507&lon=73.807").json()
     assert a["city"] == "Pune" and a["place"] == "Test Nagar, Pune" and a["measured"]["used"] >= 1 and a["forecast"]
-    assert app.get("/api/area?lat=28.6&lon=77.2").status_code == 404
+    far = app.get("/api/area?lat=18.6129&lon=74.5695")  # ~75 km east of Pune
+    assert far.status_code == 404 and far.json()["detail"]["nearest_city"] == "Pune" and 60 < far.json()["detail"]["km"] < 90
     m = app.get("/api/model").json()
     assert m["dm"]["p"] < 0.05 and len(m["horizons"]) == 14
     i = app.get("/api/insights?city=Mumbai").json()

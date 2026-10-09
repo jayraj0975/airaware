@@ -1,4 +1,5 @@
 import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { Category, ForecastDay, Personal } from '../api'
 import { dayName, fmt } from '../util'
 
@@ -102,19 +103,23 @@ export function Toaster() {
 
 // ---------- dialogs ----------
 
+/** A modal dialog. It is rendered at the end of <body> (a portal), never inside the page's own markup: a dialog
+ * with a form, opened from inside another form, would otherwise be a nested form, and the browser would submit
+ * the outer one instead (this broke two-step setup and account deletion). */
 export function Dialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', esc)
     return () => window.removeEventListener('keydown', esc)
   }, [onClose])
-  return (
+  return createPortal(
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="dialog" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="dialog-head"><h2>{title}</h2><button className="link" aria-label="Close" onClick={onClose}>✕</button></div>
+        <div className="dialog-head"><h2>{title}</h2><button type="button" className="link" aria-label="Close" onClick={onClose}>✕</button></div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

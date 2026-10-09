@@ -3,7 +3,6 @@ import { useEffect } from 'react'
 import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import type { Report, Station } from '../api'
 import { dateTime, fmt } from '../util'
-import { toast } from './ui'
 
 export interface Pin { lat: number; lon: number; label: string; colour?: string }
 
@@ -24,20 +23,6 @@ function Clicks({ onPick }: { onPick?: (lat: number, lon: number) => void }) {
   return null
 }
 
-function LocateButton({ onPick }: { onPick?: (lat: number, lon: number) => void }) {
-  const map = useMap()
-  if (!onPick || !('geolocation' in navigator)) return null
-  return (
-    <button type="button" className="locate" title="Use my location" onClick={(e) => {
-      e.stopPropagation()
-      navigator.geolocation.getCurrentPosition((p) => {
-        map.setView([p.coords.latitude, p.coords.longitude], 13)
-        onPick(p.coords.latitude, p.coords.longitude)
-      }, () => toast('Could not get your location. Allow location access, or search or click the map instead.', 'error'))
-    }}>◎ My location</button>
-  )
-}
-
 export default function AreaMap({ center, zoom = 11, stations = [], reports = [], pins = [], picked, onPick, height = 520, focus }: {
   center: [number, number]; zoom?: number; stations?: Station[]; reports?: Report[]; pins?: Pin[]
   picked?: { lat: number; lon: number } | null; onPick?: (lat: number, lon: number) => void; height?: number
@@ -51,7 +36,6 @@ export default function AreaMap({ center, zoom = 11, stations = [], reports = []
         <Recenter lat={center[0]} lon={center[1]} zoom={zoom} />
         <FlyTo to={focus} />
         <Clicks onPick={onPick} />
-        <LocateButton onPick={onPick} />
         {stations.map((s) => (
           <CircleMarker key={s.station} center={[s.lat, s.lon]} radius={11} pathOptions={{ color: '#0f172a', weight: 1, fillColor: s.category.colour, fillOpacity: 0.9 }}
             eventHandlers={{ click: (e) => { e.originalEvent.stopPropagation(); onPick?.(s.lat, s.lon) } }}>

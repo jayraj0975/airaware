@@ -102,7 +102,6 @@ footer { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wr
 
 /* map and area panel */
 .map-wrap { border-radius: 12px; overflow: hidden; position: relative; z-index: 0; }
-.locate { position: absolute; z-index: 1000; top: 10px; right: 10px; border: 1px solid #cbd5e1; background: #fff; color: #0f172a; border-radius: 8px; padding: 6px 10px; font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer; }
 .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; font-size: .78rem; color: var(--muted); }
 .legend span { display: flex; align-items: center; gap: 5px; } .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 .legend i.dashed { background: #fb923c; border: 2px dashed #7c2d12; border-radius: 50%; }
@@ -231,3 +230,5 @@ tr.off td { opacity: .5; }
 .aqi-guide { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; max-height: 60vh; overflow: auto; }
 .aqi-guide li { display: flex; gap: 12px; align-items: flex-start; } .aqi-guide p { margin: 2px 0 0; font-size: .86rem; color: var(--muted); }
 .aqi-guide .band { flex: none; width: 74px; text-align: center; border-radius: 8px; padding: 4px 0; font-weight: 700; font-size: .85rem; color: #111; }
+.find-row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; } .find-row .search-box { flex: 1; margin: 0; }
+.locate-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; height: 42px; }

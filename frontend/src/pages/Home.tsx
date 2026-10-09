@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type Area, type Overview, type Place, type Report, type Station } from '../api'
+import { api, ApiError, type Area, type Overview, type Place, type Report, type Station } from '../api'
 import AreaMap from '../components/AreaMap'
+import LocateButton from '../components/LocateButton'
 import SearchBox from '../components/SearchBox'
 import { ForecastChart, HourBars, WeatherChart } from '../components/charts'
 import { Advice, AqiHero, AskDialog, Card, DayStrip, Dialog, Empty, ErrorBox, Pill, Spinner, toast, useLoad, useTitle } from '../components/ui'
@@ -44,11 +45,19 @@ export default function Home() {
 
       <div className="map-row">
         <Card title="Pick any area" hint="Type a neighbourhood, tap the map, or use your location. Coloured dots are government monitoring stations; dashed orange dots are pollution people have reported.">
-          <SearchBox city={city} onPick={(lat, lon) => setPicked({ lat, lon }, true)} />
+          <div className="find-row">
+            <SearchBox city={city} onPick={(lat, lon) => setPicked({ lat, lon }, true)} />
+            <LocateButton onFound={(lat, lon) => setPicked({ lat, lon }, true)} />
+          </div>
           {centre && <AreaMap center={[centre.lat, centre.lon]} stations={st.data?.stations} reports={rp.data ?? []} picked={picked} focus={focus} onPick={(lat, lon) => setPicked({ lat, lon })} />}
           <Legend />
         </Card>
-        <AreaPanel picked={picked} onReported={rp.reload} onLoaded={(a) => {
+        <AreaPanel picked={picked} onReported={rp.reload} onShowCity={(c) => {
+          // Show that city's own forecast at its centre, labelled as the city: never as the visitor's location.
+          const centre = status?.cities[c]
+          setCity(c)
+          if (centre) setPicked({ lat: centre.lat, lon: centre.lon }, true)
+        }} onLoaded={(a) => {
           // A shared link or search result in the other city: switch city, then fly back to the spot.
           if (a.city !== city) { setCity(a.city); setFocus({ lat: a.lat, lon: a.lon, n: Date.now() }) }
         }} />
@@ -161,7 +170,9 @@ function Legend() {
   return <div className="legend">{status?.categories.map((c) => <span key={c.name}><i style={{ background: c.colour }} />{c.name}</span>)}<span><i className="dashed" />Reported source</span></div>
 }
 
-function AreaPanel({ picked, onReported, onLoaded }: { picked: { lat: number; lon: number } | null; onReported: () => void; onLoaded: (a: Area) => void }) {
+function AreaPanel({ picked, onReported, onLoaded, onShowCity }: {
+  picked: { lat: number; lon: number } | null; onReported: () => void; onLoaded: (a: Area) => void; onShowCity: (city: string) => void
+}) {
   const { user, refresh } = useSession()
   const area = useLoad(() => (picked ? api.get<Area>(`/api/area?lat=${picked.lat}&lon=${picked.lon}`) : Promise.resolve(null)), [picked?.lat, picked?.lon])
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,6 +185,16 @@ function AreaPanel({ picked, onReported, onLoaded }: { picked: { lat: number; lo
     </Card>
   )
   if (area.loading) return <Card title="Your area" className="area"><Spinner label="Looking up this spot…" /></Card>
+  if (area.error instanceof ApiError && area.error.data.outside) {
+    const nearest = String(area.error.data.nearest_city)
+    return (
+      <Card title="Your area" className="area">
+        <p>{area.error.message}</p>
+        <p className="small muted">We will not guess a forecast for a place we have no stations near. You can look at {nearest} instead.</p>
+        <div className="actions"><button className="btn small" onClick={() => onShowCity(nearest)}>Show {nearest}'s forecast</button></div>
+      </Card>
+    )
+  }
   if (area.error || !area.data) return <Card title="Your area" className="area"><ErrorBox error={area.error ?? 'Nothing here'} /></Card>
   const a = area.data
   const share = async () => {
