@@ -18,4 +18,4 @@ RUN useradd --create-home airaware && chown -R airaware /app
 USER airaware
 EXPOSE 8000
 # data/ holds the database and refreshed data: mount it as a volume so they survive restarts.
-CMD ["uvicorn", "airaware.server.app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["uvicorn", "airaware.server.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]

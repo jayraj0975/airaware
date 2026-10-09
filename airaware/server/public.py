@@ -9,6 +9,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, Field
 
 from airaware import live
 from airaware.aqi import ADVICE, CATEGORIES, HEALTH_GROUPS, category, personal_advice
@@ -294,13 +295,17 @@ def list_reports(city: str = "Pune", days: int = Query(14, ge=1, le=90)):
     return [{**r, "label": REPORT_KINDS.get(r["kind"], r["kind"])} for r in rs]
 
 
+class NewReport(BaseModel):
+    lat: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    lon: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    kind: str = Field(max_length=20)
+    note: str = Field("", max_length=280)
+
+
 @router.post("/reports", status_code=201)
-def create_report(request: Request, body: dict, user: dict = Depends(require_user)):
+def create_report(request: Request, body: NewReport, user: dict = Depends(require_user)):
     """A signed-in user reports a pollution source; it shows on the map once an admin approves it."""
-    try:
-        lat, lon, kind, note = float(body["lat"]), float(body["lon"]), str(body["kind"]), str(body.get("note", "")).strip()
-    except (KeyError, TypeError, ValueError):
-        raise HTTPException(422, "Send lat, lon and kind.")
+    lat, lon, kind, note = body.lat, body.lon, body.kind, body.note.strip()
     if kind not in REPORT_KINDS:
         raise HTTPException(422, f"kind must be one of {', '.join(REPORT_KINDS)}")
     city, km = live.nearest_city(lat, lon)

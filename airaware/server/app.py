@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -63,6 +64,50 @@ async def guard(request: Request, call_next):
     return response
 
 
+MAX_BODY = 64 * 1024  # every legitimate request is a few hundred bytes of JSON
+
+
+class BodyLimit:
+    """Refuses request bodies over MAX_BODY with 413, by Content-Length up front and by counting streamed bytes,
+    so a client cannot make the server buffer megabytes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        length = dict(scope["headers"]).get(b"content-length")
+        if length is not None and (not length.isdigit() or int(length) > MAX_BODY):
+            return await JSONResponse({"detail": "Request too large."}, status_code=413)(scope, receive, send)
+        seen = 0
+
+        async def limited_receive():
+            nonlocal seen
+            message = await receive()
+            seen += len(message.get("body", b""))
+            if seen > MAX_BODY:
+                raise TooLarge
+            return message
+        try:
+            await self.app(scope, limited_receive, send)
+        except TooLarge:
+            await JSONResponse({"detail": "Request too large."}, status_code=413)(scope, receive, send)
+
+
+class TooLarge(Exception):
+    pass
+
+
+app.add_middleware(BodyLimit)
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, exc: RequestValidationError):
+    """422 that says which field is wrong and why, without echoing the input back: FastAPI's default repeats
+    the submitted value, which can be a password, and crashes on values JSON cannot hold (NaN)."""
+    fields = [{"field": ".".join(str(p) for p in e.get("loc", ())[1:]) or "request", "msg": e.get("msg", "invalid")} for e in exc.errors()]
+    return JSONResponse({"detail": "; ".join(f"{f['field']}: {f['msg']}" for f in fields), "errors": fields}, status_code=422)
 app.include_router(public.router)
 app.include_router(account.router)
 app.include_router(admin.router)

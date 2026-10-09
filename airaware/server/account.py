@@ -53,8 +53,8 @@ class PasswordChange(BaseModel):
 
 class Place(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    lat: float = Field(ge=-90, le=90)
-    lon: float = Field(ge=-180, le=180)
+    lat: float = Field(ge=-90, le=90, allow_inf_nan=False)  # Python's JSON parser accepts NaN; refuse it here
+    lon: float = Field(ge=-180, le=180, allow_inf_nan=False)
 
 
 class Alert(BaseModel):

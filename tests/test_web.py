@@ -359,3 +359,13 @@ def test_search_by_name(app):
     assert r.status_code == 200 and r.json()[0]["name"] == "Kothrud"
     assert app.get("/api/search?q=K&city=Pune").status_code == 422  # too short
     assert app.get("/api/search?q=Kothrud&city=Delhi").status_code == 404
+
+
+def test_validation_errors_never_echo_input_or_crash(app):
+    c = client(app)
+    signup(c, "echo@example.com")
+    r = c.post("/api/me/places", content='{"name": "n", "lat": NaN, "lon": 73.8}', headers={**H, "Content-Type": "application/json"})
+    assert r.status_code == 422 and "lat" in r.json()["detail"]
+    r = c.post("/api/auth/login", json={"email": "x@example.com", "password": "secret-" + "p" * 300}, headers=H)
+    assert r.status_code == 422 and "secret-" not in r.text  # the password is not repeated back
+    assert c.post("/api/auth/login", content="x" * 70_000, headers={**H, "Content-Type": "application/json"}).status_code == 413
