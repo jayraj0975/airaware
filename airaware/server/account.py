@@ -2,6 +2,7 @@
 
 import os
 import sqlite3
+import urllib.parse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -23,11 +24,19 @@ class SignUp(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     password: str = Field(max_length=256)
     city: str = "Pune"
+    accept_terms: bool = False   # agreed to the Terms and the Privacy Notice (DPDP Act: free, specific, informed consent)
+    adult: bool = False          # 18 or older; the Act needs verifiable parental consent for children, which we do not take
 
 
 class SignIn(BaseModel):
     email: str = Field(max_length=320)
     password: str = Field(max_length=256)
+    code: str | None = Field(None, max_length=12)  # two-step sign-in code, when turned on
+
+
+class TwoStep(BaseModel):
+    code: str = Field(max_length=12)
+    password: str | None = Field(None, max_length=256)
 
 
 class Forgot(BaseModel):
@@ -42,8 +51,15 @@ class Reset(BaseModel):
 class Profile(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=80)
     city: str | None = None
-    health: list[str] | None = None
+    health: list[str] | None = Field(None, max_length=10)
+    health_consent: bool | None = None  # must be true the first time health information is saved
     email_alerts: bool | None = None
+
+
+class PrivacyRequest(BaseModel):
+    email: str = Field(max_length=320)
+    kind: str
+    message: str = Field(min_length=5, max_length=2000)
 
 
 class PasswordChange(BaseModel):
@@ -75,16 +91,20 @@ def signup(body: SignUp, request: Request, response: Response):
     auth.check_new_password(body.password)
     if body.city not in CITIES:
         raise HTTPException(422, "Pick Pune or Mumbai.")
+    if not (body.accept_terms and body.adult):
+        raise HTTPException(422, "To create an account, confirm you are 18 or older and agree to the Terms and the Privacy Notice.")
     ip = auth.visitor(client_ip(request))
     if not db.take("signup", ip, SIGNUPS_PER_HOUR, 60):
         raise HTTPException(429, "Too many new accounts from this network. Try again in an hour.")
     try:  # every sign-up is a plain user; admins are promoted from the server CLI (see auth.py)
-        uid = db.run("INSERT INTO users (email, name, pw_hash, city, created_at) VALUES (?, ?, ?, ?, ?)",
-                     (email, body.name.strip(), auth.hash_password(body.password), body.city, db.now()))
+        uid = db.run("""INSERT INTO users (email, name, pw_hash, city, created_at, terms_version, consent_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                     (email, body.name.strip(), auth.hash_password(body.password), body.city, db.now(), auth.POLICY_VERSION, db.now()))
     except sqlite3.IntegrityError:
         raise HTTPException(409, "An account with that email already exists. Sign in instead.")
     auth.start_session(response, uid, request)
     db.audit("user.signup", uid, email, ip)
+    db.audit("consent.given", uid, f"terms and privacy notice {auth.POLICY_VERSION}; confirmed 18+", ip)
     return auth.public_user(db.one("SELECT * FROM users WHERE id = ?", (uid,)))
 
 
@@ -99,6 +119,12 @@ def login(body: SignIn, request: Request, response: Response):
     if not u or not ok or u["disabled"]:
         db.audit("user.login_failed", u["id"] if u else None, email, ip)
         raise HTTPException(401, "Wrong email or password." if not (u and ok) else "This account is disabled.")
+    if u["totp_enabled_at"]:
+        if not body.code:
+            raise HTTPException(401, "two_step_required")  # the password was right; the app now asks for the code
+        if not auth.check_totp(u, body.code):
+            db.audit("user.login_failed", u["id"], f"{email} (two-step code)", ip)
+            raise HTTPException(401, "That code did not work. Check your authenticator app and try the newest code.")
     auth.start_session(response, u["id"], request)
     db.audit("user.login", u["id"], email, ip)
     return auth.public_user(u)
@@ -167,7 +193,12 @@ def update_profile(body: Profile, user: dict = Depends(require_user)):
         bad = set(body.health) - set(HEALTH_GROUPS)
         if bad:
             raise HTTPException(422, f"Unknown health group: {', '.join(sorted(bad))}")
+        if body.health and not (user.get("health_consent_at") or body.health_consent):
+            raise HTTPException(422, "Health information needs your explicit consent first.")
         fields["health"] = ",".join(sorted(set(body.health)))
+        if body.health and not user.get("health_consent_at"):
+            fields["health_consent_at"] = db.now()
+            db.audit("consent.health_given", user["id"], "health information used to tailor advice and alerts")
     if body.email_alerts is not None:
         fields["email_alerts"] = int(body.email_alerts)
     if fields:
@@ -181,6 +212,99 @@ def recheck_password(user: dict, password: str) -> bool:
     if not db.take("recheck", str(user["id"]), 5, 15):
         raise HTTPException(429, "Too many password checks. Wait 15 minutes and try again.")
     return auth.verify_password(password, user["pw_hash"])
+
+
+@router.post("/me/2fa/setup")
+def two_step_setup(user: dict = Depends(require_user)):
+    """Starts two-step sign-in: a new key for the authenticator app. It is not on until a code is confirmed."""
+    if user["totp_enabled_at"]:
+        raise HTTPException(409, "Two-step sign-in is already on.")
+    secret = auth.new_totp_secret()
+    db.run("UPDATE users SET totp_secret = ?, totp_last_step = NULL WHERE id = ?", (secret, user["id"]))
+    label = urllib.parse.quote(f"AirAware:{user['email']}")
+    return {"secret": secret, "uri": f"otpauth://totp/{label}?secret={secret}&issuer=AirAware&digits=6&period=30"}
+
+
+@router.post("/me/2fa/enable")
+def two_step_enable(body: TwoStep, request: Request, user: dict = Depends(require_user)):
+    if not db.take("2fa", str(user["id"]), 10, 15):
+        raise HTTPException(429, "Too many tries. Wait 15 minutes.")
+    if user["totp_enabled_at"] or not auth.check_totp(user, body.code):
+        raise HTTPException(400, "That code did not match. Use the newest code from your authenticator app.")
+    db.run("UPDATE users SET totp_enabled_at = ? WHERE id = ?", (db.now(), user["id"]))
+    db.audit("user.2fa_on", user["id"], "", client_ip(request))
+    return auth.public_user(db.one("SELECT * FROM users WHERE id = ?", (user["id"],)))
+
+
+@router.post("/me/2fa/disable")
+def two_step_disable(body: TwoStep, request: Request, user: dict = Depends(require_user)):
+    """Turning it off needs both the password and a current code."""
+    if not user["totp_enabled_at"]:
+        raise HTTPException(409, "Two-step sign-in is already off.")
+    if not db.take("2fa", str(user["id"]), 10, 15):
+        raise HTTPException(429, "Too many tries. Wait 15 minutes.")
+    if not (body.password and recheck_password(user, body.password) and auth.check_totp(user, body.code)):
+        raise HTTPException(403, "Password or code not right.")
+    db.run("UPDATE users SET totp_secret = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = ?", (user["id"],))
+    db.audit("user.2fa_off", user["id"], "", client_ip(request))
+    return auth.public_user(db.one("SELECT * FROM users WHERE id = ?", (user["id"],)))
+
+
+@router.post("/me/consent")
+def give_consent(request: Request, user: dict = Depends(require_user)):
+    """Agree to the current Terms and Privacy Notice (asked again whenever they change)."""
+    db.run("UPDATE users SET terms_version = ?, consent_at = ? WHERE id = ?", (auth.POLICY_VERSION, db.now(), user["id"]))
+    db.audit("consent.given", user["id"], f"terms and privacy notice {auth.POLICY_VERSION}", client_ip(request))
+    return auth.public_user(db.one("SELECT * FROM users WHERE id = ?", (user["id"],)))
+
+
+@router.delete("/me/health")
+def withdraw_health_consent(request: Request, user: dict = Depends(require_user)):
+    """Withdraw consent for health information: it is erased at once and advice goes back to the general level."""
+    db.run("UPDATE users SET health = '', health_consent_at = NULL WHERE id = ?", (user["id"],))
+    db.audit("consent.health_withdrawn", user["id"], "health information erased", client_ip(request))
+    return auth.public_user(db.one("SELECT * FROM users WHERE id = ?", (user["id"],)))
+
+
+@router.get("/me/export")
+def export_my_data(request: Request, user: dict = Depends(require_user)):
+    """Everything AirAware holds about you, as JSON (DPDP Act section 11: a summary of your personal data and how it is used)."""
+    if not db.take("export", str(user["id"]), 10, 60):
+        raise HTTPException(429, "You have downloaded your data a lot in the last hour. Try again later.")
+    uid = user["id"]
+    profile = {k: v for k, v in user.items() if k not in ("pw_hash", "totp_secret", "totp_last_step")}
+    db.audit("user.data_exported", uid, "", client_ip(request))
+    return {
+        "about": "Your personal data held by AirAware, and why. See /privacy for how each part is used and how long it is kept.",
+        "exported_at": db.now(),
+        "profile": profile | {"password": "stored only as a one-way scrypt hash; not included"},
+        "purposes": {"email, name, password hash": "your account and signing in",
+                     "city, places": "forecasts for the places you choose", "health groups": "tailoring advice and alert wording (only with your consent)",
+                     "alerts, notifications": "warning you before bad air days", "reports": "showing pollution sources on the public map after moderation",
+                     "sign-in records and IP addresses": "security: stopping password guessing and abuse"},
+        "places": db.rows("SELECT id, name, lat, lon, city, created_at FROM places WHERE user_id = ?", (uid,)),
+        "alerts": db.rows("SELECT id, place_id, threshold, active, last_sent, created_at FROM alerts WHERE user_id = ?", (uid,)),
+        "notifications": db.rows("SELECT title, body, created_at, read FROM notifications WHERE user_id = ?", (uid,)),
+        "reports": db.rows("SELECT id, lat, lon, city, kind, note, status, created_at FROM reports WHERE user_id = ?", (uid,)),
+        "sessions": db.rows("SELECT created_at, expires_at, ip, user_agent FROM sessions WHERE user_id = ?", (uid,)),
+        "privacy_requests": db.rows("SELECT kind, message, status, response, created_at, resolved_at FROM privacy_requests WHERE user_id = ?", (uid,)),
+        "activity_log": db.rows("SELECT at, action, detail, ip FROM audit WHERE user_id = ? ORDER BY id DESC LIMIT 500", (uid,)),
+    }
+
+
+@router.post("/privacy/requests", status_code=201)
+def privacy_request(body: PrivacyRequest, request: Request, user: dict | None = Depends(auth.current_user)):
+    """Exercise a right under the DPDP Act or raise a grievance. Open to everyone, signed in or not."""
+    kinds = {"access", "correction", "erasure", "withdraw", "grievance", "other"}
+    if body.kind not in kinds:
+        raise HTTPException(422, f"kind must be one of {', '.join(sorted(kinds))}")
+    email = auth.check_email(body.email)
+    if not db.take("privacy.ip", auth.visitor(client_ip(request)), 5, 60):
+        raise HTTPException(429, "You have sent several requests in the last hour. We will answer those first.")
+    rid = db.run("INSERT INTO privacy_requests (user_id, email, kind, message, created_at) VALUES (?, ?, ?, ?, ?)",
+                 (user["id"] if user else None, email, body.kind, body.message.strip(), db.now()))
+    db.audit("privacy.request", user["id"] if user else None, f"request {rid} ({body.kind})", client_ip(request))
+    return {"id": rid, "detail": "Got it. We will reply to your email, within 30 days at the latest."}
 
 
 @router.post("/me/password")

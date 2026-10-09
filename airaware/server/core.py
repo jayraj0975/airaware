@@ -236,6 +236,7 @@ def refresher(state: State):
         time.sleep(LIVE_MINUTES * 60)
         today = date.today().isoformat()
         if today != last_backup and run_job("daily backup", lambda: f"saved {db.backup().name}"):
+            run_job("data retention", lambda: ", ".join(f"{k}: {n}" for k, n in db.apply_retention().items() if n) or "nothing past its retention date")
             last_backup = today
         if os.environ.get("OPENAQ_API_KEY"):
             run_job("live readings", lambda: pull_live(state))

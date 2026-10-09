@@ -38,7 +38,8 @@ def overview(request: Request):
                               (SELECT COUNT(*) FROM reports WHERE status = 'pending') AS reports_pending,
                               (SELECT COUNT(*) FROM reports) AS reports,
                               (SELECT COUNT(*) FROM forecast_log) AS forecasts_logged,
-                              (SELECT COUNT(*) FROM forecast_log WHERE actual IS NOT NULL) AS forecasts_scored""")
+                              (SELECT COUNT(*) FROM forecast_log WHERE actual IS NOT NULL) AS forecasts_scored,
+                              (SELECT COUNT(*) FROM privacy_requests WHERE status = 'open') AS privacy_open""")
     signups = db.rows("""SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM users
                          WHERE created_at >= date('now', '-30 days') GROUP BY day ORDER BY day""")
     with s.lock:
@@ -152,6 +153,27 @@ def backup_now(request: Request, admin: dict = Depends(require_admin)):
     f = db.backup()
     db.audit("admin.backup_download", admin["id"], f.name, client_ip(request))
     return FileResponse(f, media_type="application/x-sqlite3", filename=f.name)
+
+
+class Resolution(BaseModel):
+    response: str
+
+
+@router.get("/privacy-requests")
+def privacy_requests(status: str = "open"):
+    return db.rows("SELECT * FROM privacy_requests WHERE status = ? ORDER BY id DESC LIMIT 200", (status,))
+
+
+@router.patch("/privacy-requests/{rid}")
+def resolve_privacy_request(rid: int, body: Resolution, request: Request, admin: dict = Depends(require_admin)):
+    """Mark a request answered, recording what was done (reply to the person by email as well)."""
+    if not body.response.strip():
+        raise HTTPException(422, "Write what was done, for the record.")
+    if not db.run("UPDATE privacy_requests SET status = 'resolved', response = ?, resolved_at = ?, resolved_by = ? WHERE id = ?",
+                  (body.response.strip()[:2000], db.now(), admin["id"], rid)):
+        raise HTTPException(404, "No such request.")
+    db.audit("admin.privacy_resolved", admin["id"], f"request {rid}", client_ip(request))
+    return {"ok": True}
 
 
 @router.get("/audit")

@@ -24,7 +24,7 @@ def check(name, ok, detail=""):
 def new_user(tag):
     c = httpx.Client(base_url=B, timeout=60)
     email = f"{tag}-{secrets.token_hex(3)}@example.com"
-    r = c.post("/api/auth/signup", json={"email": email, "name": tag, "password": "pentest-pass-1", "city": "Pune"}, headers=H)
+    r = c.post("/api/auth/signup", json={"email": email, "name": tag, "password": "pentest-pass-1", "city": "Pune", "accept_terms": True, "adult": True}, headers=H)
     return c, email, r
 
 

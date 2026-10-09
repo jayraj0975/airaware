@@ -90,6 +90,18 @@ CREATE TABLE IF NOT EXISTS password_resets (
     used_at TEXT,
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL   -- the admin who made it, or NULL for self-service
 );
+CREATE TABLE IF NOT EXISTS privacy_requests (   -- DPDP rights requests and grievances, answered from the admin console
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    email TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('access', 'correction', 'erasure', 'withdraw', 'grievance', 'other')),
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+    response TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
 CREATE TABLE IF NOT EXISTS throttle (       -- attempts counted for rate limits (see take())
     action TEXT NOT NULL, key TEXT NOT NULL, at TEXT NOT NULL
 );
@@ -123,11 +135,25 @@ def connect():
         con.close()
 
 
+# Columns added after the first release: (table, column, definition). init() adds any that are missing.
+MIGRATIONS = [
+    ("users", "terms_version", "TEXT"),          # the Terms/Privacy Notice version the user agreed to
+    ("users", "consent_at", "TEXT"),             # when they agreed, and confirmed they are 18 or older
+    ("users", "health_consent_at", "TEXT"),      # separate, explicit consent to use health information; NULL = none
+    ("users", "totp_secret", "TEXT"),            # two-step sign-in key (base32); set when setup starts
+    ("users", "totp_enabled_at", "TEXT"),        # NULL until the first code is confirmed
+    ("users", "totp_last_step", "INTEGER"),      # the last 30-second step used, so a code cannot be replayed
+]
+
+
 def init() -> None:
     path().parent.mkdir(parents=True, exist_ok=True)
     with connect() as con:
         con.execute("PRAGMA journal_mode = WAL")
         con.executescript(SCHEMA)
+        for table, column, definition in MIGRATIONS:
+            if column not in {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def rows(sql: str, args=()) -> list[dict]:
@@ -194,3 +220,25 @@ def backup(keep: int = 7) -> Path:
     for old in sorted(folder.glob("airaware-*.db"))[:-keep]:
         old.unlink()
     return target
+
+
+# How long each kind of personal data is kept (also stated in the Privacy Notice, /privacy).
+RETENTION = {
+    "read notifications": ("DELETE FROM notifications WHERE read = 1 AND created_at < ?", 180),
+    "all notifications": ("DELETE FROM notifications WHERE created_at < ?", 365),
+    "security log (sign-ins, admin actions)": ("DELETE FROM audit WHERE at < ?", 365),
+    "expired sessions": ("DELETE FROM sessions WHERE expires_at < ?", 0),
+    "used or expired reset links": ("DELETE FROM password_resets WHERE expires_at < ?", 7),
+    "rate-limit counters": ("DELETE FROM throttle WHERE at < ?", 1),
+    "answered privacy requests": ("DELETE FROM privacy_requests WHERE status = 'resolved' AND resolved_at < ?", 3 * 365),
+}
+
+
+def apply_retention() -> dict[str, int]:
+    """Deletes personal data that has passed its retention period; returns how many rows went, per kind."""
+    out = {}
+    with connect() as con:
+        for kind, (sql, days) in RETENTION.items():
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+            out[kind] = con.execute(sql, (cutoff,)).rowcount
+    return out

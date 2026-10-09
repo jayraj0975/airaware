@@ -42,6 +42,7 @@ export interface Area {
 export interface User {
   id: number; email: string; name: string; role: 'user' | 'admin'; city: string; health: string[]
   email_alerts: number; created_at: string; last_login: string | null
+  health_consent: boolean; needs_consent: boolean; two_step: boolean
 }
 export interface Place {
   id: number; name: string; lat: number; lon: number; city: string; estimate?: number

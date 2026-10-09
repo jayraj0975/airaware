@@ -1,8 +1,9 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../api'
 import AreaMap from '../components/AreaMap'
 import { Bars } from '../components/charts'
-import { Card, Empty, ErrorBox, Spinner, Stat, useLoad, useTitle } from '../components/ui'
+import { Card, Empty, ErrorBox, Spinner, Stat, toast, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { dateTime, fmt, shortDate } from '../util'
 
@@ -18,11 +19,21 @@ interface Job { id: number; kind: string; started_at: string; finished_at: strin
 interface Audit { id: number; at: string; email: string | null; action: string; detail: string; ip: string | null }
 interface StationHealth { city: string; station: string; days: number; correlation: number | null; bias: number; verdict: string; date: string; aqi: number; days_30: number }
 
-const TABS = ['Overview', 'Users', 'Reports', 'Data & jobs', 'Audit log'] as const
+const TABS = ['Overview', 'Users', 'Reports', 'Privacy requests', 'Data & jobs', 'Audit log'] as const
 
 export default function Admin() {
   useTitle('Admin')
   const [tab, setTab] = useState<(typeof TABS)[number]>('Overview')
+  const { user } = useSession()
+  if (!user?.two_step) return (
+    <div className="page narrow">
+      <Card title="One more step to use the admin console">
+        <p>Admin accounts can see every user and change the site, so they need <b>two-step sign-in</b>: a code from an authenticator app as well as your password.</p>
+        <p><Link className="btn" to="/me#security">Set up two-step sign-in</Link></p>
+        <p className="small muted">It takes a minute with Google Authenticator, Authy or any TOTP app.</p>
+      </Card>
+    </div>
+  )
   return (
     <div className="page">
       <div className="page-head"><h1>Admin console</h1><p className="muted">Platform health, users, moderation and the data pipeline.</p></div>
@@ -30,6 +41,7 @@ export default function Admin() {
       {tab === 'Overview' && <OverviewTab />}
       {tab === 'Users' && <UsersTab />}
       {tab === 'Reports' && <ReportsTab />}
+      {tab === 'Privacy requests' && <PrivacyTab />}
       {tab === 'Data & jobs' && <DataTab />}
       {tab === 'Audit log' && <AuditTab />}
     </div>
@@ -48,6 +60,7 @@ function OverviewTab() {
         <Stat label="Saved places" value={fmt(c.places)} sub={`${c.alerts} active alerts`} />
         <Stat label="Warnings sent this week" value={fmt(c.warnings_week)} />
         <Stat label="Reports to moderate" value={fmt(c.reports_pending)} sub={`${c.reports} in all`} />
+        <Stat label="Privacy requests open" value={fmt(c.privacy_open)} sub="answer within 30 days" />
         <Stat label="Forecasts logged" value={fmt(c.forecasts_logged)} sub={`${c.forecasts_scored} scored against reality`} />
         <Stat label="Model error (test)" value={`${fmt(o.model.mae, 1)} AQI`} sub={`vs ${fmt(o.model.persistence_mae, 1)} naive · p ${o.model.dm_p < 0.001 ? '< 0.001' : '= ' + fmt(o.model.dm_p, 3)}`} />
       </div>
@@ -198,6 +211,38 @@ function AuditTab() {
             <tr key={a.id}><td>{dateTime(a.at)}</td><td>{a.email ?? '–'}</td><td><code>{a.action}</code></td><td className="wrap">{a.detail}</td><td><small>{a.ip ?? ''}</small></td></tr>
           ))}</tbody>
         </table></div>
+      )}
+    </Card>
+  )
+}
+
+interface PrivacyReq { id: number; email: string; kind: string; message: string; status: string; response: string; created_at: string; resolved_at: string | null; user_id: number | null }
+const KIND_LABEL: Record<string, string> = { access: 'Access', correction: 'Correction', erasure: 'Erasure', withdraw: 'Withdraw consent', grievance: 'Grievance', other: 'Other' }
+
+function PrivacyTab() {
+  const [which, setWhich] = useState('open')
+  const reqs = useLoad(() => api.get<PrivacyReq[]>(`/api/admin/privacy-requests?status=${which}`), [which])
+  const [answer, setAnswer] = useState<Record<number, string>>({})
+  const resolve = async (id: number) => {
+    try { await api.patch(`/api/admin/privacy-requests/${id}`, { response: answer[id] ?? '' }); toast('Marked as answered.'); reqs.reload() }
+    catch (e) { toast((e as Error).message, 'error') }
+  }
+  const age = (iso: string) => Math.floor((Date.now() - +new Date(iso)) / 864e5)
+  return (
+    <Card title="Privacy requests and grievances" hint="DPDP Act: reply by email and record what was done here. Aim for well within 30 days."
+      action={<div className="tabs mini">{['open', 'resolved'].map((s) => <button key={s} className={s === which ? 'on' : ''} onClick={() => setWhich(s)}>{s}</button>)}</div>}>
+      {!reqs.data ? <Spinner /> : reqs.data.length === 0 ? <Empty>No {which} requests.</Empty> : (
+        <ul className="moderation">{reqs.data.map((r) => (
+          <li key={r.id}>
+            <b>#{r.id} · {KIND_LABEL[r.kind] ?? r.kind}</b> <small className="muted">from {r.email}{r.user_id ? ` (user ${r.user_id})` : ''} · {dateTime(r.created_at)}</small>
+            {r.status === 'open' && <span className={`tag ${age(r.created_at) > 20 ? 'rejected' : 'pending'}`} style={{ marginLeft: 8 }}>{age(r.created_at)} days old</span>}
+            <p>“{r.message}”</p>
+            {r.status === 'open' ? (
+              <div className="row-form"><input placeholder="What was done (e.g. emailed a data summary)" value={answer[r.id] ?? ''} onChange={(e) => setAnswer({ ...answer, [r.id]: e.target.value })} />
+                <button className="btn small" disabled={!answer[r.id]?.trim()} onClick={() => resolve(r.id)}>Mark answered</button></div>
+            ) : <p className="small ok">Answered {r.resolved_at ? dateTime(r.resolved_at) : ''}: {r.response}</p>}
+          </li>
+        ))}</ul>
       )}
     </Card>
   )

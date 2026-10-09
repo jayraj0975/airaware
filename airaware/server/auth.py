@@ -11,8 +11,11 @@
   the site does not verify email ownership, so an email list would let anyone claim admin.
 """
 
+import base64
 import hashlib
 import hmac
+import struct
+import time
 import os
 import re
 import secrets
@@ -109,12 +112,20 @@ def require_user(user: dict | None = Depends(current_user)) -> dict:
 def require_admin(user: dict = Depends(require_user)) -> dict:
     if user["role"] != "admin":
         raise HTTPException(403, "Admins only.")
+    if admin_needs_two_step() and not user.get("totp_enabled_at"):
+        raise HTTPException(403, "Turn on two-step sign-in on your dashboard to use the admin console.")
     return user
+
+
+POLICY_VERSION = "2026-10-10"  # bump when the Terms or Privacy Notice change; users are asked to agree again
 
 
 def public_user(u: dict) -> dict:
     return {k: u[k] for k in ("id", "email", "name", "role", "city", "email_alerts", "created_at", "last_login")} | {
-        "health": [h for h in u["health"].split(",") if h]}
+        "health": [h for h in u["health"].split(",") if h],
+        "health_consent": bool(u.get("health_consent_at")),
+        "needs_consent": u.get("terms_version") != POLICY_VERSION,
+        "two_step": bool(u.get("totp_enabled_at"))}
 
 
 LOGIN_LIMIT = 10
@@ -155,3 +166,35 @@ def use_reset_token(token: str) -> int | None:
         row = con.execute("""UPDATE password_resets SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
                              RETURNING user_id""", (db.now(), _hash(token), db.now())).fetchone()
     return row["user_id"] if row else None
+
+
+# ---------- two-step sign-in (TOTP, RFC 6238: 6 digits, 30-second steps, SHA-1, as authenticator apps expect) ----------
+
+def new_totp_secret() -> str:
+    return base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+
+
+def totp_code(secret: str, step: int) -> str:
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8))
+    digest = hmac.new(key, struct.pack(">Q", step), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    return f"{(struct.unpack('>I', digest[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000:06d}"
+
+
+def check_totp(user: dict, code: str) -> bool:
+    """True if `code` is valid now (allowing one step of clock drift either way) and newer than the last code used.
+    The last step is stored, so the same code cannot be used twice."""
+    code = "".join(ch for ch in str(code) if ch.isdigit())
+    if not user.get("totp_secret") or len(code) != 6:
+        return False
+    now = int(time.time() // 30)
+    for step in (now - 1, now, now + 1):
+        if step > (user.get("totp_last_step") or 0) and hmac.compare_digest(totp_code(user["totp_secret"], step), code):
+            # Conditional update: two requests racing with the same code cannot both succeed.
+            return db.run("UPDATE users SET totp_last_step = ? WHERE id = ? AND COALESCE(totp_last_step, 0) < ?",
+                          (step, user["id"], step)) == 1
+    return False
+
+
+def admin_needs_two_step() -> bool:
+    return os.environ.get("AIRAWARE_ADMIN_2FA", "1") == "1"

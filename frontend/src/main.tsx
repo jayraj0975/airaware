@@ -15,6 +15,9 @@ const Compare = lazy(() => import('./pages/Compare'))
 const Explore = lazy(() => import('./pages/Explore'))
 const Me = lazy(() => import('./pages/Me'))
 const Reset = lazy(() => import('./pages/Reset'))
+const Privacy = lazy(() => import('./pages/Legal').then((m) => ({ default: m.Privacy })))
+const Terms = lazy(() => import('./pages/Legal').then((m) => ({ default: m.Terms })))
+const Rights = lazy(() => import('./pages/Legal').then((m) => ({ default: m.Rights })))
 const Science = lazy(() => import('./pages/Science'))
 const TrackRecord = lazy(() => import('./pages/TrackRecord'))
 
@@ -38,6 +41,9 @@ const router = createBrowserRouter([{
     { path: '/login', element: <Auth mode="login" /> },
     { path: '/signup', element: <Auth mode="signup" /> },
     { path: '/forgot', element: <Reset mode="forgot" /> },
+    { path: '/privacy', element: <Privacy /> },
+    { path: '/terms', element: <Terms /> },
+    { path: '/rights', element: <Rights /> },
     { path: '/reset', element: <Reset mode="reset" /> },
     { path: '/me', element: <Guard><Me /></Guard> },
     { path: '/admin', element: <Guard admin><Admin /></Guard> },

@@ -29,6 +29,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 .ghost:hover { background: var(--soft); }
 .link { background: none; border: 0; color: var(--accent); padding: 2px 6px; font-size: .86rem; }
 .chip { border: 1px solid var(--line); background: var(--soft); color: var(--ink); padding: 4px 10px; margin: 4px; font-size: .84rem; }
+textarea { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; width: 100%; resize: vertical; }
 input, select { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; width: 100%; }
 input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 label { display: flex; flex-direction: column; gap: 5px; font-size: .9rem; font-weight: 500; }
@@ -214,3 +215,14 @@ tr.off td { opacity: .5; }
 .my-place:hover { border-color: var(--accent); text-decoration: none; }
 .my-place b, .my-place small { display: block; } .my-place small { color: var(--muted); font-size: .8rem; }
 .my-place.more { color: var(--accent); font-weight: 600; font-size: .88rem; }
+
+.consent { display: grid; gap: 8px; background: var(--soft); border-radius: 12px; padding: 12px 14px; }
+.consent label.check { align-items: flex-start; } .consent label.check input { margin-top: 4px; }
+.legal h2 { margin-top: 26px; } .legal table td { white-space: normal; vertical-align: top; }
+.health-consent { background: color-mix(in srgb, var(--accent) 7%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 12px; padding: 10px 12px; }
+.privacy-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+.privacy-actions p { margin: 4px 0 8px; }
+.two-step { display: grid; gap: 4px; } .two-step p { margin: 0 0 6px; } .two-step.on b { color: var(--ok); }
+.two-step-setup { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.two-step-setup img { border-radius: 10px; background: #fff; image-rendering: pixelated; }
+.key { display: inline-block; font-size: 1rem; letter-spacing: .08em; padding: 6px 10px; user-select: all; }

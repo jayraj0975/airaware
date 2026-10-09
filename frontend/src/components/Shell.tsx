@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useSession } from '../session'
 import { shortDate } from '../util'
-import { Spinner, Toaster } from './ui'
+import { Dialog, Spinner, toast, Toaster } from './ui'
 
 export default function Shell() {
   const { user, unread, status, city, setCity, setUser } = useSession()
@@ -60,10 +60,31 @@ export default function Shell() {
       )}
       <main><Suspense fallback={<Spinner />}><Outlet /></Suspense></main>
       <Toaster />
+      {user?.needs_consent && <ConsentPrompt />}
       <footer>
         <div><b>AirAware</b> · forecasts are estimates, not the official CPCB AQI. Data: CPCB via OpenAQ, Open-Meteo, Copernicus CAMS, © OpenStreetMap.</div>
-        <div><Link to="/about">About</Link> · <Link to="/science">How it works</Link> · <a href="/api/docs">API</a></div>
+        <div><Link to="/about">About</Link> · <Link to="/science">How it works</Link> · <Link to="/privacy">Privacy</Link> · <Link to="/terms">Terms</Link> · <Link to="/rights">Your rights & contact</Link> · <a href="/api/docs">API</a></div>
       </footer>
     </>
+  )
+}
+
+/** Shown once to signed-in users when the Terms or Privacy Notice have changed since they last agreed. */
+function ConsentPrompt() {
+  const { setUser } = useSession()
+  const nav = useNavigate()
+  const agree = async () => {
+    try { setUser(await api.post('/api/me/consent')); toast('Thanks. You are all set.') } catch (e) { toast((e as Error).message, 'error') }
+  }
+  const leave = async () => {
+    await api.post('/api/auth/logout').catch(() => undefined)
+    setUser(null)
+    nav('/')
+  }
+  return (
+    <Dialog title="We have updated our Terms and Privacy Notice" onClose={leave}>
+      <p className="small">To keep using your account, please read and agree to the updated <Link to="/terms">Terms</Link> and <Link to="/privacy">Privacy Notice</Link>. The short version: we use your details only to run your account and warn you about bad air, never sell them, and you can download or delete everything any time.</p>
+      <div className="actions end"><button className="ghost small" onClick={leave}>Not now, sign me out</button><button className="btn small" onClick={agree}>I agree</button></div>
+    </Dialog>
   )
 }

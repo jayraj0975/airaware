@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ["AIRAWARE_REFRESH"] = "0"
+os.environ["AIRAWARE_ADMIN_2FA"] = "0"  # admin tests below; test_two_step_sign_in checks enforcement
 os.environ["AIRAWARE_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
 
 from airaware import live  # noqa: E402
@@ -37,7 +38,7 @@ def client(app):
 
 
 def signup(c, email, name="Asha", password="correct horse", city="Pune"):
-    return c.post("/api/auth/signup", json={"email": email, "name": name, "password": password, "city": city}, headers=H)
+    return c.post("/api/auth/signup", json={"email": email, "name": name, "password": password, "city": city, "accept_terms": True, "adult": True}, headers=H)
 
 
 def test_public_pages_and_api(app):
@@ -75,7 +76,7 @@ def test_signup_login_logout_and_profile(app):
 
     me = c.get("/api/auth/me").json()
     assert me["user"]["email"] == "asha@example.com" and me["unread"] == 0
-    p = c.patch("/api/me", json={"health": ["asthma"], "city": "Mumbai"}, headers=H).json()
+    p = c.patch("/api/me", json={"health": ["asthma"], "health_consent": True, "city": "Mumbai"}, headers=H).json()
     assert p["health"] == ["asthma"] and p["city"] == "Mumbai"
     assert c.patch("/api/me", json={"health": ["vampire"]}, headers=H).status_code == 422
 
@@ -369,3 +370,84 @@ def test_validation_errors_never_echo_input_or_crash(app):
     r = c.post("/api/auth/login", json={"email": "x@example.com", "password": "secret-" + "p" * 300}, headers=H)
     assert r.status_code == 422 and "secret-" not in r.text  # the password is not repeated back
     assert c.post("/api/auth/login", content="x" * 70_000, headers={**H, "Content-Type": "application/json"}).status_code == 413
+
+
+def test_dpdp_consent_rights_and_retention(app):
+    # sign-up needs agreement to the terms and an adult confirmation
+    r = client(app).post("/api/auth/signup", json={"email": "noconsent@example.com", "name": "N", "password": "long-enough-1", "city": "Pune"}, headers=H)
+    assert r.status_code == 422
+    c = client(app)
+    u = signup(c, "rights@example.com").json()
+    assert u["needs_consent"] is False and u["health_consent"] is False
+
+    # health information needs its own explicit consent, and withdrawing it erases it
+    assert c.patch("/api/me", json={"health": ["asthma"]}, headers=H).status_code == 422
+    assert c.patch("/api/me", json={"health": ["asthma"], "health_consent": True}, headers=H).json()["health"] == ["asthma"]
+    w = c.delete("/api/me/health", headers=H).json()
+    assert w["health"] == [] and w["health_consent"] is False
+
+    # a copy of everything, without the password hash
+    c.post("/api/me/places", json={"name": "Work", "lat": 18.53, "lon": 73.85}, headers=H)
+    data = c.get("/api/me/export").json()
+    assert data["profile"]["email"] == "rights@example.com" and "pw_hash" not in data["profile"]
+    assert data["places"][0]["name"] == "Work" and any(a["action"] == "consent.given" for a in data["activity_log"])
+
+    # anyone can file a request or grievance; admins see and resolve it
+    rid = client(app).post("/api/privacy/requests", json={"email": "outsider@example.com", "kind": "grievance", "message": "Please explain my data."}, headers=H).json()["id"]
+    assert client(app).post("/api/privacy/requests", json={"email": "x@example.com", "kind": "hack", "message": "hello there"}, headers=H).status_code == 422
+    boss = client(app)
+    signup(boss, "dpo@example.com")
+    manage.main(["make-admin", "dpo@example.com"])
+    assert any(q["id"] == rid for q in boss.get("/api/admin/privacy-requests").json())
+    assert boss.patch(f"/api/admin/privacy-requests/{rid}", json={"response": "Replied by email with a summary."}, headers=H).json() == {"ok": True}
+
+    # retention: old read notifications go, recent ones stay
+    uid = db.one("SELECT id FROM users WHERE email = ?", ("rights@example.com",))["id"]
+    db.run("INSERT INTO notifications (user_id, title, body, created_at, read) VALUES (?, 'old', 'x', '2000-01-01T00:00:00+00:00', 1)", (uid,))
+    db.run("INSERT INTO notifications (user_id, title, body, created_at, read) VALUES (?, 'new', 'x', ?, 1)", (uid, db.now()))
+    gone = db.apply_retention()
+    assert gone["read notifications"] >= 1
+    assert [n["title"] for n in db.rows("SELECT title FROM notifications WHERE user_id = ?", (uid,))] == ["new"]
+
+
+def test_existing_users_are_asked_to_agree_to_new_terms(app):
+    c = client(app)
+    signup(c, "oldtimer@example.com")
+    db.run("UPDATE users SET terms_version = NULL WHERE email = 'oldtimer@example.com'")
+    assert c.get("/api/auth/me").json()["user"]["needs_consent"] is True
+    assert c.post("/api/me/consent", headers=H).json()["needs_consent"] is False
+
+
+def test_two_step_sign_in(app, monkeypatch):
+    import time as _time
+    c = client(app)
+    signup(c, "twostep@example.com", password="two-step-pass")
+    manage.main(["make-admin", "twostep@example.com"])
+    monkeypatch.setenv("AIRAWARE_ADMIN_2FA", "1")
+    assert c.get("/api/admin/overview").status_code == 403  # admins need two-step on
+
+    setup = c.post("/api/me/2fa/setup", headers=H).json()
+    assert setup["uri"].startswith("otpauth://totp/AirAware") and len(setup["secret"]) >= 32
+    step = int(_time.time() // 30)
+    assert c.post("/api/me/2fa/enable", json={"code": "000000"}, headers=H).status_code == 400
+    assert c.post("/api/me/2fa/enable", json={"code": auth.totp_code(setup["secret"], step)}, headers=H).json()["two_step"] is True
+    assert c.get("/api/admin/overview").status_code == 200
+
+    fresh = client(app)
+    login = {"email": "twostep@example.com", "password": "two-step-pass"}
+    assert fresh.post("/api/auth/login", json=login, headers=H).json()["detail"] == "two_step_required"
+    used = auth.totp_code(setup["secret"], step)
+    assert fresh.post("/api/auth/login", json={**login, "code": used}, headers=H).status_code == 401  # replay of the enable code
+    nxt = auth.totp_code(setup["secret"], step + 1)
+    assert fresh.post("/api/auth/login", json={**login, "code": nxt}, headers=H).status_code == 200
+    assert fresh.post("/api/auth/login", json={**login, "code": nxt}, headers=H).status_code == 401  # same code again
+    assert "totp_secret" not in c.get("/api/me/export").json()["profile"]
+
+    assert manage.main(["reset-2fa", "twostep@example.com"]) == 0
+    assert c.get("/api/admin/overview").status_code == 403
+
+
+def test_totp_matches_rfc_6238():
+    # RFC 6238 test vector (SHA-1): secret "12345678901234567890", time 59 s -> 94287082 (last 6 digits 287082)
+    secret = __import__("base64").b32encode(b"12345678901234567890").decode().rstrip("=")
+    assert auth.totp_code(secret, 59 // 30) == "287082"

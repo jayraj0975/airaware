@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import qrcode from 'qrcode-generator'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, type Note, type Place } from '../api'
 import AreaMap from '../components/AreaMap'
-import { Advice, AskDialog, Card, ConfirmDialog, DayStrip, Empty, ErrorBox, Pill, Spinner, toast, useLoad, useTitle } from '../components/ui'
+import { Advice, AskDialog, Card, ConfirmDialog, DayStrip, Dialog, Empty, ErrorBox, Pill, Spinner, toast, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { dateTime, fmt, upcoming } from '../util'
 
@@ -16,9 +17,10 @@ export default function Me() {
   const [adding, setAdding] = useState(false)
   useTitle('Your places')
 
-  useEffect(() => {
-    if (location.hash === '#notifications') document.getElementById('notifications')?.scrollIntoView({ behavior: 'smooth' })
-  }, [notes.data])
+  useEffect(() => {  // links like /me#security land on that section once the page has its content
+    const id = location.hash.slice(1)
+    if (id) document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [notes.data, places.data])
   if (!user) return null
   const centre = status?.cities[user.city] ?? status?.cities[city]
 
@@ -48,7 +50,7 @@ export default function Me() {
             ))}</ul>
           )}
         </Card>
-        <Profile />
+        <Profile key={`${user.health.join()}-${user.health_consent}-${user.city}`} />
       </div>
 
       <div className="grid two">
@@ -61,6 +63,7 @@ export default function Me() {
         </Card>
         <Security />
       </div>
+      <PrivacyCard />
     </div>
   )
 }
@@ -133,10 +136,14 @@ function Profile() {
   const [name, setName] = useState(user!.name)
   const [home, setHome] = useState(user!.city)
   const [email, setEmail] = useState(!!user!.email_alerts)
+  const [consent, setConsent] = useState(user!.health_consent)
+  const needsConsent = health.length > 0 && !user!.health_consent
   const save = async () => {
-    const u = await api.patch<typeof user>('/api/me', { name, city: home, health, email_alerts: email })
-    setUser(u)
-    toast('Profile saved. Advice across the site now follows it.')
+    try {
+      const u = await api.patch<typeof user>('/api/me', { name, city: home, health, health_consent: consent || undefined, email_alerts: email })
+      setUser(u)
+      toast('Profile saved. Advice across the site now follows it.')
+    } catch (e) { toast((e as Error).message, 'error') }
   }
   return (
     <Card title={<span id="profile">Profile and health</span>} hint="Used only to tune advice and alert wording. Never shared.">
@@ -148,8 +155,12 @@ function Profile() {
             <label key={k} className="check"><input type="checkbox" checked={health.includes(k)} onChange={(e) => setHealth(e.target.checked ? [...health, k] : health.filter((h) => h !== k))} />{v}</label>
           ))}
         </fieldset>
+        {needsConsent && (
+          <label className="check health-consent"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+            <span>I consent to AirAware using this health information <b>only</b> to tailor advice and alert levels for me. I can erase it any time below. (Optional: you can use everything without it.)</span></label>
+        )}
         <label className="check"><input type="checkbox" checked={email} onChange={(e) => setEmail(e.target.checked)} />Also email me alerts (when the server has email set up)</label>
-        <button className="btn small" onClick={save}>Save profile</button>
+        <button className="btn small" disabled={needsConsent && !consent} onClick={save}>Save profile</button>
       </div>
     </Card>
   )
@@ -174,7 +185,7 @@ function Security() {
     nav('/')
   }
   return (
-    <Card title="Account and security" hint={`Signed in as ${user!.email}`}>
+    <Card title={<span id="security">Account and security</span>} hint={`Signed in as ${user!.email}`}>
       <form className="form" onSubmit={change}>
         <input type="email" autoComplete="username" value={user!.email} readOnly hidden />
         <label>Current password<input type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} /></label>
@@ -182,11 +193,113 @@ function Security() {
         <button className="ghost small" disabled={!pw.current || pw.new.length < 8}>Change password</button>
         {msg && <p className="small">{msg}</p>}
         <hr />
+        <TwoStep />
+        <hr />
         <button type="button" className="link danger" onClick={() => setDeleting(true)}>Delete my account</button>
       </form>
       {deleting && <AskDialog title="Delete your account?" label="Your password" type="password" ok="Delete for good" danger
         note="This permanently deletes your account, places, alerts and notifications. Reports you made stay on the map without your name."
         onClose={() => setDeleting(false)} onSubmit={remove} />}
     </Card>
+  )
+}
+
+function PrivacyCard() {
+  const { user, setUser } = useSession()
+  const [withdrawing, setWithdrawing] = useState(false)
+  const download = async () => {
+    try {
+      const data = await api.get<unknown>('/api/me/export')
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
+      Object.assign(document.createElement('a'), { href: url, download: `airaware-my-data-${new Date().toISOString().slice(0, 10)}.json` }).click()
+      URL.revokeObjectURL(url)
+      toast('Downloaded: everything we hold about you.')
+    } catch (e) { toast((e as Error).message, 'error') }
+  }
+  return (
+    <Card title={<span id="privacy">Your data and privacy</span>} hint="Your rights under India's DPDP Act, one click away">
+      <div className="privacy-actions">
+        <div><b>See everything we hold</b><p className="small muted">A file with your profile, places, alerts, notifications, reports, sign-in sessions and activity log.</p>
+          <button className="ghost small" onClick={download}>⤓ Download my data</button></div>
+        <div><b>Health information</b><p className="small muted">{user!.health_consent ? `You consented to using your health groups to tailor advice.` : 'You have not shared any health information.'}</p>
+          {user!.health_consent && <button className="ghost small" onClick={() => setWithdrawing(true)}>Withdraw consent and erase it</button>}</div>
+        <div><b>Questions or complaints</b><p className="small muted">Ask for a correction, raise a grievance or nominate someone to act for you.</p>
+          <Link className="small" to="/rights">Contact us about your data →</Link></div>
+        <div><b>Leave for good</b><p className="small muted">Deleting your account erases your data. Use “Delete my account” under Account and security.</p>
+          <Link className="small" to="/privacy">Read the Privacy Notice →</Link></div>
+      </div>
+      {withdrawing && <ConfirmDialog title="Erase your health information?" ok="Erase it" onClose={() => setWithdrawing(false)}
+        onConfirm={async () => { setUser(await api.del('/api/me/health')); toast('Erased. Advice is back to the general level.') }}>
+        Your health groups are deleted straight away and advice goes back to what everyone sees. You can add them again later.
+      </ConfirmDialog>}
+    </Card>
+  )
+}
+
+function TwoStep() {
+  const { user, setUser } = useSession()
+  const [setup, setSetup] = useState<{ secret: string; uri: string } | null>(null)
+  const [code, setCode] = useState('')
+  const [turningOff, setTurningOff] = useState(false)
+  const start = async () => {
+    try { setSetup(await api.post('/api/me/2fa/setup')) } catch (e) { toast((e as Error).message, 'error') }
+  }
+  const enable = async () => {
+    try { setUser(await api.post('/api/me/2fa/enable', { code })); setSetup(null); setCode(''); toast('Two-step sign-in is on. You will need a code each time you sign in.') }
+    catch (e) { toast((e as Error).message, 'error') }
+  }
+  const qr = useMemo(() => {
+    if (!setup) return ''
+    const q = qrcode(0, 'M')
+    q.addData(setup.uri)
+    q.make()
+    return q.createDataURL(5, 2)
+  }, [setup])
+  if (user!.two_step) return (
+    <div className="two-step on">
+      <b>✓ Two-step sign-in is on</b>
+      <p className="small muted">Signing in needs your password and a code from your authenticator app.</p>
+      <button type="button" className="link danger" onClick={() => setTurningOff(true)}>Turn it off</button>
+      {turningOff && <TurnOff onClose={() => setTurningOff(false)} />}
+    </div>
+  )
+  return (
+    <div className="two-step">
+      <b>Two-step sign-in</b>
+      <p className="small muted">Adds a 6-digit code from an app like Google Authenticator or Authy, so a stolen password alone is not enough.{user!.role === 'admin' ? ' Required for the admin console.' : ''}</p>
+      {!setup ? <button type="button" className="ghost small" onClick={start}>Set up two-step sign-in</button> : (
+        <div className="two-step-setup">
+          <img src={qr} alt="QR code to scan with your authenticator app" width={180} height={180} />
+          <div>
+            <p className="small">1. Scan this with your authenticator app, or <a href={setup.uri}>open it on this phone</a>, or type this key:</p>
+            <code className="key">{setup.secret.match(/.{1,4}/g)!.join(' ')}</code>
+            <p className="small">2. Enter the 6-digit code it shows:</p>
+            <div className="row-form"><input inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="123 456" value={code} onChange={(e) => setCode(e.target.value)} />
+              <button type="button" className="btn small" disabled={code.replace(/\D/g, '').length !== 6} onClick={enable}>Turn on</button></div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TurnOff({ onClose }: { onClose: () => void }) {
+  const { setUser } = useSession()
+  const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [error, setError] = useState('')
+  return (
+    <Dialog title="Turn off two-step sign-in?" onClose={onClose}>
+      <form className="form" onSubmit={async (e) => {
+        e.preventDefault()
+        try { setUser(await api.post('/api/me/2fa/disable', { password, code })); toast('Two-step sign-in is off.'); onClose() } catch (err) { setError((err as Error).message) }
+      }}>
+        <p className="small muted">Your account will be protected by your password alone.</p>
+        <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        <label>Current code<input inputMode="numeric" autoComplete="one-time-code" required maxLength={7} value={code} onChange={(e) => setCode(e.target.value)} /></label>
+        {error && <div className="error">{error}</div>}
+        <div className="actions end"><button type="button" className="ghost small" onClick={onClose}>Cancel</button><button className="btn small danger-btn">Turn off</button></div>
+      </form>
+    </Dialog>
   )
 }
