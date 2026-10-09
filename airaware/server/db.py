@@ -156,8 +156,8 @@ def take(action: str, key: str, limit: int, minutes: int) -> bool:
             con.execute("ROLLBACK")
             return False
         con.execute("INSERT INTO throttle (action, key, at) VALUES (?, ?, ?)", (action, key, now()))
-        if n == 0:  # a key's first attempt in a window is a cheap moment to drop expired rows
-            con.execute("DELETE FROM throttle WHERE at < ?", (since,))
+        if n == 0:  # a cheap moment to drop this action's expired rows; other actions have other windows
+            con.execute("DELETE FROM throttle WHERE action = ? AND at < ?", (action, since))
         con.execute("COMMIT")
         return True
     except BaseException:

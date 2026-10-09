@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useSession } from '../session'
 import { shortDate } from '../util'
+import { Spinner } from './ui'
 
 export default function Shell() {
   const { user, unread, status, city, setCity, setUser } = useSession()
@@ -56,7 +57,7 @@ export default function Shell() {
             : <>Station readings to {shortDate(status.cities[city]?.last_measured ?? '')} (public archive, a few days behind) · weather and CAMS forecasts live · forecasts start from the last reading</>}
         </div>
       )}
-      <main><Outlet /></main>
+      <main><Suspense fallback={<Spinner />}><Outlet /></Suspense></main>
       <footer>
         <div><b>AirAware</b> · forecasts are estimates, not the official CPCB AQI. Data: CPCB via OpenAQ, Open-Meteo, Copernicus CAMS, © OpenStreetMap.</div>
         <div><Link to="/about">About</Link> · <Link to="/science">How it works</Link> · <a href="/api/docs">API</a></div>

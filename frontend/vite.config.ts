@@ -5,5 +5,19 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react()],
   server: { proxy: { '/api': 'http://127.0.0.1:8000' } },
-  build: { chunkSizeWarningLimit: 900 },
+  build: {
+    chunkSizeWarningLimit: 400,
+    // Libraries in their own files: they change rarely, so browsers keep them cached across app releases.
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('leaflet')) return 'map'
+          if (id.includes('chart.js') || id.includes('react-chartjs')) return 'charts'
+          if (id.includes('react')) return 'react'
+          return 'vendor'
+        },
+      },
+    },
+  },
 })

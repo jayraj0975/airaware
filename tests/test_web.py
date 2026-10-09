@@ -110,6 +110,14 @@ def test_login_limit_per_email_whatever_the_address(app, monkeypatch):
     assert auth.allow_login("198.51.100.7", "someone-else@example.com")
 
 
+def test_take_cleanup_keeps_other_actions_rows():
+    old = "2000-01-01T00:00:00+00:00"
+    db.run("INSERT INTO throttle (action, key, at) VALUES ('long', 'k', ?)", (old,))
+    db.run("INSERT INTO throttle (action, key, at) VALUES ('long', 'k', ?)", (db.now(),))
+    assert db.take("short", "k", 5, 1)  # cleans up 'short' rows only
+    assert db.one("SELECT COUNT(*) AS n FROM throttle WHERE action = 'long'")["n"] == 2
+
+
 def test_take_is_atomic_under_parallel_requests():
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(16) as ex:
