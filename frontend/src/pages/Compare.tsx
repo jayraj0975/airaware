@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type Area, type Place } from '../api'
 import AreaMap from '../components/AreaMap'
+import SearchBox from '../components/SearchBox'
 import { LineChart } from '../components/charts'
 import { Card, Empty, Pill, useTitle } from '../components/ui'
 import { useSession } from '../session'
@@ -37,7 +38,8 @@ export default function Compare() {
     <div className="page">
       <div className="page-head"><h1>Compare areas</h1><p className="muted">Click up to four spots, say home, office and your child's school, to see whose air is better this week.</p></div>
       <div className="map-row">
-        <Card title="Pick spots" hint={`${spots.length}/4 chosen`} action={spots.length > 0 && <button className="ghost small" onClick={() => setSpots([])}>Clear</button>}>
+        <Card title="Pick spots" hint={`${spots.length}/4 chosen: search, or click the map`} action={spots.length > 0 && <button className="ghost small" onClick={() => setSpots([])}>Clear</button>}>
+          <SearchBox city={city} onPick={(lat, lon, label) => add(lat, lon, label)} />
           {centre && <AreaMap center={[centre.lat, centre.lon]} onPick={(lat, lon) => add(lat, lon)} height={440}
             pins={spots.map((s, i) => ({ lat: s.lat, lon: s.lon, label: s.label ?? `Spot ${i + 1}`, colour: COLOURS[i] }))} />}
           {places.length > 0 && <div className="chips">Your places: {places.map((p) => <button key={p.id} className="chip" onClick={() => add(p.lat, p.lon, p.name)}>{p.name}</button>)}</div>}
@@ -49,7 +51,7 @@ export default function Compare() {
                 <div key={s.id} className="compare-item" style={{ borderColor: COLOURS[i] }}>
                   <b>{s.label ?? 'Loading…'}</b>
                   {s.error && <span className="warn small">{s.error}</span>}
-                  {s.area && <><span className="big" style={{ color: s.area.today.category.colour }}>{fmt(s.area.today.forecast)}</span><Pill cat={s.area.today.category} />
+                  {s.area && <><span className="swatch" style={{ background: s.area.today.category.colour }} /><span className="big">{fmt(s.area.today.forecast)}</span><Pill cat={s.area.today.category} />
                     <span className="small muted">{dayName(s.area.today.date)} · week average {fmt(upcoming(s.area.forecast).reduce((a, f) => a + f.forecast, 0) / upcoming(s.area.forecast).length)}</span></>}
                 </div>
               ))}

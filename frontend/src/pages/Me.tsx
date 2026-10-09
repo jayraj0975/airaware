@@ -84,7 +84,7 @@ function PlaceCard({ p, onChange }: { p: Place; onChange: () => void }) {
       {removing && <ConfirmDialog title={`Remove ${p.name}?`} ok="Remove" onClose={() => setRemoving(false)}
         onConfirm={() => run(() => api.del(`/api/me/places/${p.id}`), `${p.name} removed.`)}>Its alerts are deleted too.</ConfirmDialog>}
       {today ? <>
-        <div className="mid"><b style={{ color: today.category.colour }}>{fmt(today.forecast)}</b> <Pill cat={today.category} /> <span className="small muted">today · likely {fmt(today.lo)}–{fmt(today.hi)}</span></div>
+        <div className="mid"><span className="swatch" style={{ background: today.category.colour }} /><b>{fmt(today.forecast)}</b> <Pill cat={today.category} /> <span className="small muted">today · likely {fmt(today.lo)}–{fmt(today.hi)}</span></div>
         <DayStrip days={days} compact />
         <Advice p={today.personal} />
       </> : <Empty>No forecast for this spot.</Empty>}
