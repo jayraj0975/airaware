@@ -3,12 +3,19 @@ import { useEffect } from 'react'
 import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import type { Report, Station } from '../api'
 import { dateTime, fmt } from '../util'
+import { toast } from './ui'
 
 export interface Pin { lat: number; lon: number; label: string; colour?: string }
 
 function Recenter({ lat, lon, zoom }: { lat: number; lon: number; zoom: number }) {
   const map = useMap()
   useEffect(() => { map.setView([lat, lon], zoom) }, [lat, lon, zoom, map])
+  return null
+}
+
+function FlyTo({ to }: { to?: { lat: number; lon: number; n: number } | null }) {
+  const map = useMap()
+  useEffect(() => { if (to) map.flyTo([to.lat, to.lon], 14, { duration: 0.8 }) }, [to, map])
   return null
 }
 
@@ -26,14 +33,15 @@ function LocateButton({ onPick }: { onPick?: (lat: number, lon: number) => void 
       navigator.geolocation.getCurrentPosition((p) => {
         map.setView([p.coords.latitude, p.coords.longitude], 13)
         onPick(p.coords.latitude, p.coords.longitude)
-      }, () => alert('Could not get your location. Allow location access, or click the map instead.'))
+      }, () => toast('Could not get your location. Allow location access, or search or click the map instead.', 'error'))
     }}>◎ My location</button>
   )
 }
 
-export default function AreaMap({ center, zoom = 11, stations = [], reports = [], pins = [], picked, onPick, height = 520 }: {
+export default function AreaMap({ center, zoom = 11, stations = [], reports = [], pins = [], picked, onPick, height = 520, focus }: {
   center: [number, number]; zoom?: number; stations?: Station[]; reports?: Report[]; pins?: Pin[]
   picked?: { lat: number; lon: number } | null; onPick?: (lat: number, lon: number) => void; height?: number
+  focus?: { lat: number; lon: number; n: number } | null  // fly here (n changes on every request)
 }) {
   return (
     <div className="map-wrap" style={{ height }}>
@@ -41,6 +49,7 @@ export default function AreaMap({ center, zoom = 11, stations = [], reports = []
         <TileLayer url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maxZoom={19}
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' />
         <Recenter lat={center[0]} lon={center[1]} zoom={zoom} />
+        <FlyTo to={focus} />
         <Clicks onPick={onPick} />
         <LocateButton onPick={onPick} />
         {stations.map((s) => (

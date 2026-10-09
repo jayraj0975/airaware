@@ -22,6 +22,7 @@ from airaware.data import CITIES, TZ, _url
 
 WX_API = "https://api.open-meteo.com/v1/forecast"
 GEOCODE = "https://nominatim.openstreetmap.org/reverse"
+SEARCH = "https://nominatim.openstreetmap.org/search"
 OPENAQ = "https://api.openaq.org/v3"
 USER_AGENT = "AirAware/1.0 (college air-quality project)"
 
@@ -141,8 +142,11 @@ def place_name(lat: float, lon: float) -> str:
     """The neighbourhood at a point, from OpenStreetMap; empty if the lookup fails."""
     def fetch():
         a = _json(GEOCODE, {"lat": round(lat, 3), "lon": round(lon, 3), "format": "jsonv2", "zoom": 15}).get("address", {})
-        return ", ".join(dict.fromkeys(x for x in [a.get("suburb") or a.get("neighbourhood") or a.get("village") or a.get("town"),
-                                                   a.get("city") or a.get("county")] if x))
+        suburb = a.get("suburb", "")
+        if suburb.lower().endswith("ward"):  # Mumbai's municipal wards ("H/W Ward") mean little to people
+            suburb = ""
+        local = suburb or a.get("neighbourhood") or a.get("quarter") or a.get("locality") or a.get("village") or a.get("town") or a.get("suburb")
+        return ", ".join(dict.fromkeys(x for x in [local, a.get("city") or a.get("county")] if x))
     try:
         return cached(("geo", round(lat, 3), round(lon, 3)), 86400, fetch)
     except (OSError, ValueError):
@@ -188,3 +192,28 @@ def _hourly_mean(hours: list[dict]) -> tuple[float, int]:
     """Mean of valid hourly values (same error codes and limits as the archive cleaning)."""
     v = [h["value"] for h in hours if h.get("value") is not None and 0 < h["value"] < 985]
     return (float(np.mean(v)) if v else math.nan), len(v)
+
+
+def search_places(query: str, city: str, limit: int = 6) -> list[dict]:
+    """Places matching `query` inside the city's area, from OpenStreetMap, cached for a day."""
+    lat, lon = CITIES[city]
+    box = f"{lon - 0.4},{lat + 0.35},{lon + 0.4},{lat - 0.35}"  # west, north, east, south: about 80 x 80 km
+
+    def fetch():
+        found = _json(SEARCH, {"q": query, "format": "jsonv2", "limit": 15, "viewbox": box, "bounded": 1, "addressdetails": 0})
+        q = query.strip().lower()
+        def rank(r):  # localities first, then roads and stations, then single buildings; exact names first in each
+            kind = r.get("category", "")
+            group = 0 if kind in ("place", "boundary") or (kind == "landuse" and r.get("type") == "residential") else \
+                1 if kind in ("highway", "railway") else 2
+            return group, r.get("name", "").lower() != q, -float(r.get("importance") or 0)
+        out = []
+        for r in sorted(found, key=rank):
+            parts = [p.strip() for p in r.get("display_name", "").split(",")]
+            name, area = parts[0], ", ".join(p for p in parts[1:3] if p and not p.isdigit())
+            lat_, lon_ = float(r["lat"]), float(r["lon"])
+            if len(name) < 3 or any(o["name"].lower() == name.lower() and abs(o["lat"] - lat_) < 0.02 and abs(o["lon"] - lon_) < 0.02 for o in out):
+                continue  # one entry per place: the same name within about 2 km is the same place
+            out.append({"name": name, "area": area, "lat": lat_, "lon": lon_})
+        return out[:limit]
+    return cached(("search", city, query.strip().lower()), 86400, fetch)

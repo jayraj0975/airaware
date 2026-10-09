@@ -1,6 +1,6 @@
 import { api } from '../api'
 import { HBar, LineChart } from '../components/charts'
-import { Card, ErrorBox, Spinner, Stat, useLoad } from '../components/ui'
+import { Card, ErrorBox, Spinner, Stat, useLoad, useTitle } from '../components/ui'
 import { fmt } from '../util'
 
 interface Model {
@@ -22,6 +22,7 @@ const NAMES: Record<string, string> = {
 const short = (m: string) => m.replace('AirAware: linear regression on the change', 'AirAware').replace('Persistence (tomorrow = today)', 'Tomorrow = today')
 
 export default function Science() {
+  useTitle('The science')
   const { data: m, error } = useLoad(() => api.get<Model>('/api/model'), [])
   if (error) return <div className="page"><ErrorBox error={error} /></div>
   if (!m) return <div className="page"><Spinner /></div>

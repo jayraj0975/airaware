@@ -204,6 +204,16 @@ def area(request: Request, response: Response, lat: float = Query(ge=-90, le=90)
     })
 
 
+@router.get("/search", dependencies=[Depends(limited)])
+def search(q: str = Query(min_length=2, max_length=80), city: str = "Pune"):
+    """Find an area by name, within the chosen city."""
+    check_city(city)
+    try:
+        return live.search_places(q, city)
+    except (OSError, ValueError):
+        raise HTTPException(503, "Place search is busy. Try again in a moment, or click the map.")
+
+
 @router.get("/model")
 def model_api(request: Request):
     r = state(request).result

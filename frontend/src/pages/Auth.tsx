@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, type User } from '../api'
 import { useSession } from '../session'
+import { useTitle } from '../components/ui'
 
 export default function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const { setUser, refresh, city } = useSession()
@@ -11,6 +12,7 @@ export default function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const signup = mode === 'signup'
+  useTitle(signup ? 'Create an account' : 'Sign in')
   const next = params.get('next')?.startsWith('/') && !params.get('next')?.startsWith('//') ? params.get('next')! : '/me'
 
   const submit = async (e: FormEvent) => {

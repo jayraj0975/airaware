@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type Area, type Place } from '../api'
 import AreaMap from '../components/AreaMap'
 import { LineChart } from '../components/charts'
-import { Card, Empty, Pill } from '../components/ui'
+import { Card, Empty, Pill, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { dayName, fmt, upcoming } from '../util'
 
@@ -11,6 +11,7 @@ type Spot = { id: number; lat: number; lon: number; label?: string; area?: Area;
 let nextId = 1
 
 export default function Compare() {
+  useTitle('Compare areas')
   const { city, status, user } = useSession()
   const [spots, setSpots] = useState<Spot[]>([])
   const centre = status?.cities[city]

@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, type Note, type Place } from '../api'
 import AreaMap from '../components/AreaMap'
-import { Advice, Card, DayStrip, Empty, ErrorBox, Pill, Spinner, useLoad } from '../components/ui'
+import { Advice, AskDialog, Card, ConfirmDialog, DayStrip, Empty, ErrorBox, Pill, Spinner, toast, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { dateTime, fmt, upcoming } from '../util'
 
@@ -14,6 +14,7 @@ export default function Me() {
   const notes = useLoad(() => api.get<Note[]>('/api/me/notifications'), [])
   const reports = useLoad(() => api.get<MyReport[]>('/api/me/reports'), [])
   const [adding, setAdding] = useState(false)
+  useTitle('Your places')
 
   useEffect(() => {
     if (location.hash === '#notifications') document.getElementById('notifications')?.scrollIntoView({ behavior: 'smooth' })
@@ -68,13 +69,20 @@ function PlaceCard({ p, onChange }: { p: Place; onChange: () => void }) {
   const days = upcoming(p.forecast)
   const today = days[0]
   const [threshold, setThreshold] = useState(150)
-  const remove = async () => { if (confirm(`Remove ${p.name}?`)) { await api.del(`/api/me/places/${p.id}`); onChange() } }
-  const addAlert = async () => { await api.post('/api/me/alerts', { place_id: p.id, threshold }); onChange() }
-  const toggle = async (id: number, active: number) => { await api.patch(`/api/me/alerts/${id}`, { active: !active }); onChange() }
-  const dropAlert = async (id: number) => { await api.del(`/api/me/alerts/${id}`); onChange() }
+  const [removing, setRemoving] = useState(false)
+  const run = async (action: () => Promise<unknown>, done: string) => {
+    try { await action(); toast(done); onChange() } catch (e) { toast((e as Error).message, 'error') }
+  }
+  const addAlert = () => run(() => api.post('/api/me/alerts', { place_id: p.id, threshold }), `We will warn you when ${p.name} reaches ${threshold}.`)
+  const toggle = (id: number, active: number) => run(() => api.patch(`/api/me/alerts/${id}`, { active: !active }), active ? 'Alert paused.' : 'Alert back on.')
+  const dropAlert = (id: number) => run(() => api.del(`/api/me/alerts/${id}`), 'Alert deleted.')
   return (
     <div className="place">
-      <div className="place-head"><h3>{p.name}</h3><button className="link danger" onClick={remove}>Remove</button></div>
+      <div className="place-head"><h3>{p.name}</h3><div className="actions">
+        <Link className="small" to={`/?lat=${p.lat}&lon=${p.lon}`}>Details</Link>
+        <button className="link danger" onClick={() => setRemoving(true)}>Remove</button></div></div>
+      {removing && <ConfirmDialog title={`Remove ${p.name}?`} ok="Remove" onClose={() => setRemoving(false)}
+        onConfirm={() => run(() => api.del(`/api/me/places/${p.id}`), `${p.name} removed.`)}>Its alerts are deleted too.</ConfirmDialog>}
       {today ? <>
         <div className="mid"><b style={{ color: today.category.colour }}>{fmt(today.forecast)}</b> <Pill cat={today.category} /> <span className="small muted">today · likely {fmt(today.lo)}–{fmt(today.hi)}</span></div>
         <DayStrip days={days} compact />
@@ -105,7 +113,7 @@ function AddPlace({ centre, onAdded }: { centre: [number, number]; onAdded: () =
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const save = async () => {
-    try { await api.post('/api/me/places', { name, lat: spot!.lat, lon: spot!.lon }); onAdded() } catch (e) { setError((e as Error).message) }
+    try { await api.post('/api/me/places', { name, lat: spot!.lat, lon: spot!.lon }); toast(`Saved “${name}”.`); onAdded() } catch (e) { setError((e as Error).message) }
   }
   return (
     <div className="add-place">
@@ -125,11 +133,10 @@ function Profile() {
   const [name, setName] = useState(user!.name)
   const [home, setHome] = useState(user!.city)
   const [email, setEmail] = useState(!!user!.email_alerts)
-  const [saved, setSaved] = useState('')
   const save = async () => {
     const u = await api.patch<typeof user>('/api/me', { name, city: home, health, email_alerts: email })
     setUser(u)
-    setSaved('Saved. Advice across the site now follows your profile.')
+    toast('Profile saved. Advice across the site now follows it.')
   }
   return (
     <Card title={<span id="profile">Profile and health</span>} hint="Used only to tune advice and alert wording. Never shared.">
@@ -143,7 +150,6 @@ function Profile() {
         </fieldset>
         <label className="check"><input type="checkbox" checked={email} onChange={(e) => setEmail(e.target.checked)} />Also email me alerts (when the server has email set up)</label>
         <button className="btn small" onClick={save}>Save profile</button>
-        {saved && <p className="ok small">{saved}</p>}
       </div>
     </Card>
   )
@@ -154,15 +160,18 @@ function Security() {
   const nav = useNavigate()
   const [pw, setPw] = useState({ current: '', new: '' })
   const [msg, setMsg] = useState('')
+  const [deleting, setDeleting] = useState(false)
   const change = async (e: FormEvent) => {
     e.preventDefault()
-    try { await api.post('/api/me/password', pw); setMsg('Password changed. Other devices have been signed out.'); setPw({ current: '', new: '' }) }
+    try { await api.post('/api/me/password', pw); setMsg(''); toast('Password changed. Other devices have been signed out.'); setPw({ current: '', new: '' }) }
     catch (e) { setMsg((e as Error).message) }
   }
-  const remove = async () => {
-    const password = prompt('This deletes your account, places and alerts for good. Type your password to confirm:')
-    if (!password) return
-    try { await api.del('/api/me', { email: user!.email, password }); navigator.serviceWorker?.controller?.postMessage('signed-out'); setUser(null); nav('/') } catch (e) { setMsg((e as Error).message) }
+  const remove = async (password: string) => {
+    await api.del('/api/me', { email: user!.email, password })
+    navigator.serviceWorker?.controller?.postMessage('signed-out')
+    setUser(null)
+    toast('Your account and everything in it has been deleted.')
+    nav('/')
   }
   return (
     <Card title="Account and security" hint={`Signed in as ${user!.email}`}>
@@ -173,8 +182,11 @@ function Security() {
         <button className="ghost small" disabled={!pw.current || pw.new.length < 8}>Change password</button>
         {msg && <p className="small">{msg}</p>}
         <hr />
-        <button type="button" className="link danger" onClick={remove}>Delete my account</button>
+        <button type="button" className="link danger" onClick={() => setDeleting(true)}>Delete my account</button>
       </form>
+      {deleting && <AskDialog title="Delete your account?" label="Your password" type="password" ok="Delete for good" danger
+        note="This permanently deletes your account, places, alerts and notifications. Reports you made stay on the map without your name."
+        onClose={() => setDeleting(false)} onSubmit={remove} />}
     </Card>
   )
 }

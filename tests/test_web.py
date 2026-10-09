@@ -24,6 +24,7 @@ def app():
     mp = pytest.MonkeyPatch()
     mp.setattr(live, "weather_now", lambda lat, lon: WEATHER)
     mp.setattr(live, "place_name", lambda lat, lon: "Test Nagar, Pune")
+    mp.setattr(live, "search_places", lambda q, city: [{"name": "Kothrud", "area": "Pune", "lat": 18.507, "lon": 73.806}])
     mp.setattr(account, "SIGNUPS_PER_HOUR", 1000)  # every test client signs up from the same address
     with TestClient(server.app) as c:
         yield c
@@ -351,3 +352,10 @@ def test_password_rechecks_are_capped_per_account(app):
     codes = [c.post("/api/me/password", json={"current": "wrong-guess", "new": "another-pass"}, headers=H).status_code for _ in range(6)]
     assert codes == [403] * 5 + [429]
     assert c.request("DELETE", "/api/me", json={"email": "hammer@example.com", "password": "real-password"}, headers=H).status_code == 429
+
+
+def test_search_by_name(app):
+    r = app.get("/api/search?q=Kothrud&city=Pune")
+    assert r.status_code == 200 and r.json()[0]["name"] == "Kothrud"
+    assert app.get("/api/search?q=K&city=Pune").status_code == 422  # too short
+    assert app.get("/api/search?q=Kothrud&city=Delhi").status_code == 404

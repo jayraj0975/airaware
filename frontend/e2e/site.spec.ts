@@ -50,3 +50,10 @@ test('wrong password is refused', async ({ page }) => {
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByText('Wrong email or password.')).toBeVisible()
 })
+
+test('a shared link opens that area, switching city if needed', async ({ page }) => {
+  await page.goto('/?lat=19.06&lon=72.836')  // Bandra, Mumbai
+  await expect(page.getByText('forecast for this area')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.cities .on')).toHaveText('Mumbai')
+  await expect(page).toHaveURL(/lat=19\.06/)
+})

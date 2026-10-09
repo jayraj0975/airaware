@@ -1,5 +1,5 @@
 import { api } from '../api'
-import { Card, Empty, ErrorBox, Spinner, Stat, useLoad } from '../components/ui'
+import { Card, Empty, ErrorBox, Spinner, Stat, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { colourOf, fmt, shortDate } from '../util'
 
@@ -11,6 +11,7 @@ interface Track {
 
 export default function TrackRecord() {
   const { city } = useSession()
+  useTitle(`Track record · ${city}`)
   const { data, error } = useLoad(() => api.get<Track>(`/api/track-record?city=${encodeURIComponent(city)}`), [city])
   if (error) return <div className="page"><ErrorBox error={error} /></div>
   if (!data) return <div className="page"><Spinner /></div>

@@ -1,6 +1,6 @@
 import { api } from '../api'
 import { Bars, LineChart, SeasonChart } from '../components/charts'
-import { Card, ErrorBox, Spinner, useLoad } from '../components/ui'
+import { Card, ErrorBox, Spinner, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { colourOf, fmt, heat, hourName, MONTHS, WEEKDAYS } from '../util'
 
@@ -13,6 +13,7 @@ interface Insights {
 
 export default function Explore() {
   const { city } = useSession()
+  useTitle(`Insights · ${city}`)
   const { data, error } = useLoad(() => api.get<Insights>(`/api/insights?city=${encodeURIComponent(city)}`), [city])
   if (error) return <div className="page"><ErrorBox error={error} /></div>
   if (!data) return <div className="page"><Spinner /></div>

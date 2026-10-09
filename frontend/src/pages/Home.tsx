@@ -1,23 +1,39 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { api, type Area, type Overview, type Report, type Station } from '../api'
+import { useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { api, type Area, type Overview, type Place, type Report, type Station } from '../api'
 import AreaMap from '../components/AreaMap'
+import SearchBox from '../components/SearchBox'
 import { ForecastChart, HourBars, WeatherChart } from '../components/charts'
-import { Advice, AqiHero, Card, DayStrip, Empty, ErrorBox, Pill, Spinner, useLoad } from '../components/ui'
+import { Advice, AqiHero, AskDialog, Card, DayStrip, Empty, ErrorBox, Pill, Spinner, toast, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { compass, dayName, fmt, hourName, shortDate, upcoming, WEATHER } from '../util'
 
+const fromUrl = (p: URLSearchParams) => {
+  const lat = Number(p.get('lat')), lon = Number(p.get('lon'))
+  return p.has('lat') && p.has('lon') && Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null
+}
+
 export default function Home() {
-  const { city, status } = useSession()
+  const { city, setCity, status } = useSession()
+  useTitle('')
   const ov = useLoad(() => api.get<Overview>(`/api/overview?city=${encodeURIComponent(city)}`), [city])
   const st = useLoad(() => api.get<{ source: string; stations: Station[] }>(`/api/stations?city=${encodeURIComponent(city)}`), [city])
   const rp = useLoad(() => api.get<Report[]>(`/api/reports?city=${encodeURIComponent(city)}`), [city])
-  const [picked, setPicked] = useState<{ lat: number; lon: number } | null>(null)
+  const [params, setParams] = useSearchParams()
+  const [picked, setPickedState] = useState<{ lat: number; lon: number } | null>(() => fromUrl(params))
+  const [focus, setFocus] = useState<{ lat: number; lon: number; n: number } | null>(() => (fromUrl(params) ? { ...fromUrl(params)!, n: 0 } : null))
   const centre = status?.cities[city]
+  // The picked spot lives in the address bar, so an area can be bookmarked or shared.
+  const setPicked = (p: { lat: number; lon: number }, fly = false) => {
+    setPickedState(p)
+    if (fly) setFocus({ ...p, n: Date.now() })
+    setParams({ lat: p.lat.toFixed(5), lon: p.lon.toFixed(5) }, { replace: true })
+  }
 
   return (
     <div className="page">
       {ov.error ? <ErrorBox error={ov.error} /> : !ov.data ? <div className="hero-grid"><div className="skeleton big" /><div className="skeleton" /><div className="skeleton" /></div> : <Hero o={ov.data} />}
+      <MyPlaces onOpen={(p) => setPicked(p, true)} />
 
       {ov.data && ov.data.hours.length > 0 && (
         <Card title={`${dayName(upcoming(ov.data.forecast)[0].date)}, hour by hour`}
@@ -27,11 +43,15 @@ export default function Home() {
       )}
 
       <div className="map-row">
-        <Card title="Pick any area" hint="Click anywhere, or use your location. Dots are CPCB stations; dashed orange dots are pollution reported by people.">
-          {centre && <AreaMap center={[centre.lat, centre.lon]} stations={st.data?.stations} reports={rp.data ?? []} picked={picked} onPick={(lat, lon) => setPicked({ lat, lon })} />}
+        <Card title="Pick any area" hint="Search, click the map, or use your location. Dots are CPCB stations; dashed orange dots are pollution reported by people.">
+          <SearchBox city={city} onPick={(lat, lon) => setPicked({ lat, lon }, true)} />
+          {centre && <AreaMap center={[centre.lat, centre.lon]} stations={st.data?.stations} reports={rp.data ?? []} picked={picked} focus={focus} onPick={(lat, lon) => setPicked({ lat, lon })} />}
           <Legend />
         </Card>
-        <AreaPanel picked={picked} onReported={rp.reload} />
+        <AreaPanel picked={picked} onReported={rp.reload} onLoaded={(a) => {
+          // A shared link or search result in the other city: switch city, then fly back to the spot.
+          if (a.city !== city) { setCity(a.city); setFocus({ lat: a.lat, lon: a.lon, n: Date.now() }) }
+        }} />
       </div>
 
       {ov.data && (
@@ -63,13 +83,13 @@ function Hero({ o }: { o: Overview }) {
   return (
     <div className="hero-grid">
       <AqiHero label={<>{o.city} · {dayName(today.date)} · AirAware forecast</>} value={today.forecast} cat={today.category}
-        sub={<>Likely {fmt(today.lo)}–{fmt(today.hi)} · {today.days_ahead} day{today.days_ahead > 1 ? 's' : ''} after the last reading · chance of Poor or worse {Math.round(today.p_poor * 100)}%</>}>
+        sub={<>Likely between {fmt(today.lo)} and {fmt(today.hi)} · chance of a Poor day {Math.round(today.p_poor * 100)}% · from station readings up to {shortDate(today.made_from)}</>}>
         <Advice p={today.personal} />
         {!user && <div className="hint-on-colour"><Link to="/signup">Create a free account</Link> for advice tuned to your health and alerts for your places.</div>}
       </AqiHero>
       <div className="card stack">
         <span className="muted small">Tomorrow</span>
-        {tomorrow ? <div className="mid"><b style={{ color: tomorrow.category.colour }}>{fmt(tomorrow.forecast)}</b> <Pill cat={tomorrow.category} /></div> : <div>–</div>}
+        {tomorrow ? <div className="mid"><span className="swatch" style={{ background: tomorrow.category.colour }} /><b>{fmt(tomorrow.forecast)}</b> <Pill cat={tomorrow.category} /></div> : <div>–</div>}
         {tomorrow && <span className="small">Likely {fmt(tomorrow.lo)}–{fmt(tomorrow.hi)}</span>}
         <div className="row"><span>Cleanest day ahead</span><b>{dayName(o.plan.best_day)} ({fmt(o.plan.best_day_aqi)})</b></div>
         <div className="row"><span>Cleanest hours</span><b>{o.plan.best_hours.map(hourName).join(', ')}</b></div>
@@ -88,15 +108,44 @@ function Hero({ o }: { o: Overview }) {
   )
 }
 
+/** Signed-in users see their saved places first, one tap from each place's details. */
+function MyPlaces({ onOpen }: { onOpen: (p: { lat: number; lon: number }) => void }) {
+  const { user } = useSession()
+  const [places, setPlaces] = useState<Place[] | null>(null)
+  useEffect(() => {
+    const load = () => { if (user) api.get<Place[]>('/api/me/places').then(setPlaces).catch(() => setPlaces([])); else setPlaces(null) }
+    load()
+    window.addEventListener('aa-places-changed', load)
+    return () => window.removeEventListener('aa-places-changed', load)
+  }, [user])
+  if (!user || !places || places.length === 0) return null
+  return (
+    <div className="my-places">
+      {places.map((p) => {
+        const t = upcoming(p.forecast)[0]
+        return (
+          <button key={p.id} className="my-place" onClick={() => { onOpen(p); document.querySelector('.map-row')?.scrollIntoView({ behavior: 'smooth' }) }}>
+            <span className="swatch" style={{ background: t?.category.colour ?? '#ccc' }} />
+            <span><b>{p.name}</b><small>{t ? `${fmt(t.forecast)} · ${t.category.name}` : 'No forecast'}</small></span>
+          </button>
+        )
+      })}
+      <Link to="/me" className="my-place more">Manage places & alerts →</Link>
+    </div>
+  )
+}
+
 function Legend() {
   const { status } = useSession()
   return <div className="legend">{status?.categories.map((c) => <span key={c.name}><i style={{ background: c.colour }} />{c.name}</span>)}<span><i className="dashed" />Reported source</span></div>
 }
 
-function AreaPanel({ picked, onReported }: { picked: { lat: number; lon: number } | null; onReported: () => void }) {
+function AreaPanel({ picked, onReported, onLoaded }: { picked: { lat: number; lon: number } | null; onReported: () => void; onLoaded: (a: Area) => void }) {
   const { user, refresh } = useSession()
   const area = useLoad(() => (picked ? api.get<Area>(`/api/area?lat=${picked.lat}&lon=${picked.lon}`) : Promise.resolve(null)), [picked?.lat, picked?.lon])
-  const [msg, setMsg] = useState('')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (area.data) onLoaded(area.data) }, [area.data])
+  const [saving, setSaving] = useState(false)
   if (!picked) return (
     <Card title="Your area" className="area">
       <p className="muted">Click a spot on the map to see its estimated air quality, its forecast for the coming days, the weather there right now, nearby stations and anything people have reported.</p>
@@ -106,11 +155,12 @@ function AreaPanel({ picked, onReported }: { picked: { lat: number; lon: number 
   if (area.loading) return <Card title="Your area" className="area"><Spinner label="Looking up this spot…" /></Card>
   if (area.error || !area.data) return <Card title="Your area" className="area"><ErrorBox error={area.error ?? 'Nothing here'} /></Card>
   const a = area.data
-  const save = async () => {
-    const name = prompt('Name this place (e.g. Home, Office, School):', a.place.split(',')[0] || 'My place')
-    if (!name) return
-    try { await api.post('/api/me/places', { name, lat: a.lat, lon: a.lon }); setMsg(`Saved “${name}”. Set an alert for it on your dashboard.`); refresh() }
-    catch (e) { setMsg((e as Error).message) }
+  const share = async () => {
+    const url = location.href
+    try {
+      if (navigator.share) await navigator.share({ title: `Air quality in ${a.place || a.city}`, url })
+      else { await navigator.clipboard.writeText(url); toast('Link copied: anyone who opens it sees this area.') }
+    } catch { /* the user closed the share sheet */ }
   }
   return (
     <Card title="Your area" className="area">
@@ -134,16 +184,25 @@ function AreaPanel({ picked, onReported }: { picked: { lat: number; lon: number 
       {a.reports.length > 0 && <p className="small warn">⚠ {a.reports.length} pollution report{a.reports.length > 1 ? 's' : ''} within 3 km this week: {[...new Set(a.reports.map((r) => r.label.toLowerCase()))].join(', ')}.</p>}
       {user ? (
         <div className="actions">
-          <button className="btn small" onClick={save}>★ Save this place</button>
-          <ReportButton lat={a.lat} lon={a.lon} onDone={(m) => { setMsg(m); onReported() }} />
+          <button className="btn small" onClick={() => setSaving(true)}>★ Save this place</button>
+          <button className="ghost small" onClick={share}>↗ Share</button>
+          <ReportButton lat={a.lat} lon={a.lon} onDone={(m, ok) => { toast(m, ok ? 'ok' : 'error'); if (ok) onReported() }} />
         </div>
-      ) : <p className="small"><Link to="/signup">Sign up</Link> to save this place, get alerts and report pollution.</p>}
-      {msg && <p className="small ok">{msg}</p>}
+      ) : <div className="actions"><button className="ghost small" onClick={share}>↗ Share this area</button><span className="small"><Link to="/signup">Sign up</Link> to save it, get alerts and report pollution.</span></div>}
+      {saving && <AskDialog title="Save this place" label="Name" initial={a.place.split(',')[0] || 'My place'} ok="Save"
+        note="Give it a name you will recognise, like Home, Office or School. You can set an alert for it on your dashboard."
+        onClose={() => setSaving(false)}
+        onSubmit={async (name) => {
+          await api.post('/api/me/places', { name: name.trim(), lat: a.lat, lon: a.lon })
+          toast(`Saved “${name.trim()}”.`)
+          window.dispatchEvent(new Event('aa-places-changed'))
+          refresh()
+        }} />}
     </Card>
   )
 }
 
-function ReportButton({ lat, lon, onDone }: { lat: number; lon: number; onDone: (msg: string) => void }) {
+function ReportButton({ lat, lon, onDone }: { lat: number; lon: number; onDone: (msg: string, ok: boolean) => void }) {
   const { status } = useSession()
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState('burning')
@@ -152,8 +211,8 @@ function ReportButton({ lat, lon, onDone }: { lat: number; lon: number; onDone: 
   if (!open) return <button className="ghost small" onClick={() => setOpen(true)}>⚑ Report pollution here</button>
   const send = async () => {
     setBusy(true)
-    try { await api.post('/api/reports', { lat, lon, kind, note }); onDone('Thanks! Your report will show on the map once a moderator approves it.'); setOpen(false); setNote('') }
-    catch (e) { onDone((e as Error).message) }
+    try { await api.post('/api/reports', { lat, lon, kind, note }); onDone('Thanks! Your report will show on the map once a moderator approves it.', true); setOpen(false); setNote('') }
+    catch (e) { onDone((e as Error).message, false) }
     finally { setBusy(false) }
   }
   return (

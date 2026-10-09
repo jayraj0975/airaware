@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api } from '../api'
 import AreaMap from '../components/AreaMap'
 import { Bars } from '../components/charts'
-import { Card, Empty, ErrorBox, Spinner, Stat, useLoad } from '../components/ui'
+import { Card, Empty, ErrorBox, Spinner, Stat, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { dateTime, fmt, shortDate } from '../util'
 
@@ -21,6 +21,7 @@ interface StationHealth { city: string; station: string; days: number; correlati
 const TABS = ['Overview', 'Users', 'Reports', 'Data & jobs', 'Audit log'] as const
 
 export default function Admin() {
+  useTitle('Admin')
   const [tab, setTab] = useState<(typeof TABS)[number]>('Overview')
   return (
     <div className="page">

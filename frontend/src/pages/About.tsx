@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom'
-import { Card } from '../components/ui'
+import { Card, useTitle } from '../components/ui'
 
 export default function About() {
+  useTitle('About')
   return (
     <div className="page narrow prose">
       <h1>Know your air, a week ahead</h1>
