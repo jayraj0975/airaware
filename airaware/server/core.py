@@ -229,8 +229,23 @@ def pull_live(state: State) -> str:
     return f"{len(readings)} stations live"
 
 
+STALE_DAYS = 2  # the archive is usually 4-5 days behind; older than that means a refresh is overdue
+
+
+def data_is_stale(state: State) -> bool:
+    with state.lock:
+        newest = state.daily.dropna(subset=["aqi"])["date"].max()
+    return (pd.Timestamp(date.today()) - newest).days > 4 + STALE_DAYS
+
+
 def refresher(state: State):
+    """Background loop. If the data is already out of date at startup (frequent restarts can postpone the 6-hourly
+    rebuild indefinitely), it rebuilds within a couple of minutes instead of waiting a full cycle."""
     last_build = time.time()
+    if data_is_stale(state):
+        time.sleep(120)  # let startup traffic settle first
+        run_job("startup rebuild (data out of date)", lambda: rebuild(state))
+        last_build = time.time()
     last_backup = ""
     while True:
         time.sleep(LIVE_MINUTES * 60)

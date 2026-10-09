@@ -29,7 +29,7 @@ export default function Explore() {
     <div className="page">
       <div className="page-head"><h1>Insights · {city}</h1><p className="muted">What {fmt(data.days)} days of station readings since {new Date(data.since).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })} say about {city}'s air.</p></div>
       <div className="grid two">
-        <Card title="When in the day is the air cleanest?" hint="Hourly station PM since January 2025, as an AQI-equivalent">
+        <Card title="When in the day is the air cleanest?" hint="Every hour of every month since January 2025, from all the stations. Greener is cleaner.">
           <div className="heatmap">
             <div className="lbl" />
             {[...Array(24).keys()].map((h) => <div key={`h${h}`} className="lbl">{h % 3 === 0 ? h : ''}</div>)}

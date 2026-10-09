@@ -37,13 +37,13 @@ export default function Home() {
 
       {ov.data && ov.data.hours.length > 0 && (
         <Card title={`${dayName(upcoming(ov.data.forecast)[0].date)}, hour by hour`}
-          hint={`The day's forecast spread over the usual daily pattern for ${city} in this month. Outlined bar: now. Cleanest waking hours: ${ov.data.plan.best_hours.map(hourName).join(', ')}.`}>
+          hint={`How ${city}'s air usually rises and falls through a day this month, scaled to today's forecast. The outlined bar is now. Best time to be outside: ${ov.data.plan.best_hours.map(hourName).join(', ')}.`}>
           <HourBars hours={ov.data.hours} />
         </Card>
       )}
 
       <div className="map-row">
-        <Card title="Pick any area" hint="Search, click the map, or use your location. Dots are CPCB stations; dashed orange dots are pollution reported by people.">
+        <Card title="Pick any area" hint="Type a neighbourhood, tap the map, or use your location. Coloured dots are government monitoring stations; dashed orange dots are pollution people have reported.">
           <SearchBox city={city} onPick={(lat, lon) => setPicked({ lat, lon }, true)} />
           {centre && <AreaMap center={[centre.lat, centre.lon]} stations={st.data?.stations} reports={rp.data ?? []} picked={picked} focus={focus} onPick={(lat, lon) => setPicked({ lat, lon })} />}
           <Legend />
@@ -56,7 +56,7 @@ export default function Home() {
 
       {ov.data && (
         <div className="grid two">
-          <Card title="The last six weeks and the week ahead" hint={`Forecast from the last reading on ${shortDate(ov.data.measured.date)}, with the 80% range`}>
+          <Card title="The last six weeks and the week ahead" hint={`Blue is what the stations measured, up to ${shortDate(ov.data.measured.date)}. Orange is our forecast; the shaded band is where the real value lands 4 times in 5.`}>
             <ForecastChart history={ov.data.history} forecast={ov.data.forecast} />
             <DayStrip days={upcoming(ov.data.forecast)} />
           </Card>
@@ -67,7 +67,7 @@ export default function Home() {
         </div>
       )}
 
-      <Card title={`Stations in ${city}`} hint={st.data?.source === 'live' ? 'Live 24-hour averages' : "Each station's latest day in the public archive"}>
+      <Card title={`Stations in ${city}`} hint={st.data?.source === 'live' ? 'Live 24-hour averages' : "Each station's most recent full day of readings"}>
         {st.loading ? <Spinner /> : st.data && <StationTable rows={st.data.stations} />}
       </Card>
     </div>

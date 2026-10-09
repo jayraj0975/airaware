@@ -79,6 +79,15 @@ DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as
 A background thread rebuilds the data and retrains every 6 hours (live readings hourly with an OpenAQ key), logs
 the new forecasts, scores old ones whose day has been measured, and raises alerts.
 
+**Privacy and the DPDP Act 2023**
+- Plain-language [Privacy Notice](frontend/src/pages/Legal.tsx) and Terms; sign-up records agreement and an 18+
+  confirmation, and asks again when the policy version changes.
+- Health information needs separate, explicit consent; withdrawing it erases it at once.
+- Rights in the dashboard: download everything (JSON with purposes), correct, erase (delete account). Anyone can file
+  a privacy request or grievance; admins answer them from an inbox that shows their age.
+- Retention limits applied daily; one strictly necessary cookie; no analytics or tracking; no access log, so looked-up
+  locations are never stored next to IP addresses.
+
 **Security**
 - Passwords hashed with scrypt.
 - Sessions in HttpOnly SameSite cookies; only a hash of each token is stored. Sessions are cleared on logout,
@@ -87,7 +96,13 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
 - Limits, counted in the database with an atomic check-and-record so parallel requests cannot slip past: sign-in
   attempts (10 per 15 minutes per email, 20 per IPv4 address or IPv6 /64), sign-ups (5 an hour per network). Area
   lookups are limited per visitor (30 a minute) and calls to outside services are rate-capped.
-- Admins are made only from the server command line, never by signing up with a particular email.
+- Admins are made only from the server command line, never by signing up with a particular email, and must turn on
+  two-step sign-in (TOTP authenticator codes, replay-protected) before the admin console opens.
+- Self-pentest: `security/attack.py` runs 55 attacks (CSRF, CORS, IDOR, admin access, SQL injection, XSS storage,
+  NaN/huge inputs, 64 kB body cap, path traversal, brute force, reset-token guessing, rate limits, session replay)
+  and runs in CI with pip-audit and npm audit on every push.
+- Behind the tunnel, a visitor's real address is taken only from the trusted proxy, so limits work per visitor and
+  the forwarding headers cannot be forged; HSTS is sent over HTTPS; the Server header does not name the software.
 - Password resets: one-time links (an hour by email, a day from an admin), stored only as hashes, voided by a newer
   link, and carried after `#` so they never reach server logs. "Forgot password" answers the same, in the same time,
   whether or not the email has an account (the work happens after the reply). Emailed links use AIRAWARE_PUBLIC_URL,
@@ -99,7 +114,16 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
 
 ## Run it
 
-**Docker** (one command, restarts on boot, data in a volume):
+**On your phone, over HTTPS** (self-hosted: your machine serves it through a Cloudflare tunnel; no Vercel or Render):
+
+```sh
+docker compose up -d && docker compose logs tunnel | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com'
+```
+
+Open that address on any phone, sign in, and "Add to Home screen" to install it. The quick tunnel's address changes
+if the tunnel restarts; a named Cloudflare tunnel gives a permanent one (see compose.yaml).
+
+**Docker on this machine only** (restarts on boot, data in a volume):
 
 ```sh
 docker build -t airaware . && docker run -d --name airaware --restart unless-stopped -p 8000:8000 \
@@ -117,7 +141,7 @@ grants admin on sign-up because it does not verify email ownership):
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
 cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
-.venv/bin/python -m pytest                                         # 33 backend tests
+.venv/bin/python -m pytest                                         # 40 backend tests
 cd frontend && npm run build && npx playwright test                # end-to-end, desktop and phone
 ```
 
@@ -128,7 +152,9 @@ cd frontend && npm run build && npx playwright test                # end-to-end,
 | `AIRAWARE_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | none | email alerts and password-reset emails |
 | `AIRAWARE_PUBLIC_URL` | none | the site's address, used in emailed links (e.g. https://airaware.example) |
 | `AIRAWARE_DB` | data/airaware.db | SQLite file |
-| `AIRAWARE_REBUILD_HOURS` | 6 | how often to download and retrain |
+| `AIRAWARE_REBUILD_HOURS` | 6 | how often to download and retrain (sooner after startup if the data is stale) |
+| `AIRAWARE_TRUSTED_PROXIES` | none | reverse proxy addresses allowed to report the visitor's IP (the tunnel) |
+| `AIRAWARE_ADMIN_2FA` | 1 | set to 0 only for tests: admins need two-step sign-in |
 
 API docs (OpenAPI): http://localhost:8000/api/docs.
 

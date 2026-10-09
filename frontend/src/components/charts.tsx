@@ -22,7 +22,7 @@ export function ForecastChart({ history, forecast }: { history: { date: string; 
           labels: [...history.map((h) => h.date), ...forecast.map((f) => f.date)].map(shortDate),
           datasets: [
             { label: 'Measured', data: history.map((h) => h.aqi), borderColor: '#3b82f6', backgroundColor: '#3b82f6', pointRadius: 0, tension: 0.3 },
-            { label: '80% range', data: pad(forecast.map((f) => f.hi)), borderColor: 'transparent', backgroundColor: 'rgba(245,133,24,.2)', fill: '+1', pointRadius: 0 },
+            { label: 'Likely range', data: pad(forecast.map((f) => f.hi)), borderColor: 'transparent', backgroundColor: 'rgba(245,133,24,.2)', fill: '+1', pointRadius: 0 },
             { label: '', data: pad(forecast.map((f) => f.lo)), borderColor: 'transparent', pointRadius: 0 },
             { label: 'AirAware forecast', data: pad(forecast.map((f) => f.forecast)), borderColor: '#f58518', backgroundColor: '#f58518', borderDash: [6, 4], tension: 0.3 },
           ],

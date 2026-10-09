@@ -1,12 +1,29 @@
+# AirAware with a public HTTPS address: `docker compose up -d`, then `docker compose logs tunnel | grep trycloudflare`.
+# The quick tunnel needs no Cloudflare account; its address changes when the tunnel restarts. For a permanent
+# address, create a named tunnel in Cloudflare and replace the tunnel command with `tunnel run --token <token>`.
 services:
   airaware:
     build: .
-    ports: ["8000:8000"]
+    ports: ["8000:8000"]                       # also reachable on this machine at http://localhost:8000
     environment:
-      OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}                   # optional: live hourly CPCB readings
-      AIRAWARE_SECURE_COOKIES: ${AIRAWARE_SECURE_COOKIES:-0} # set to 1 behind HTTPS
-      AIRAWARE_SMTP_HOST: ${AIRAWARE_SMTP_HOST:-}           # optional: email alerts
+      AIRAWARE_TRUSTED_PROXIES: 172.30.0.20    # only the tunnel may tell us a visitor's real address
+      AIRAWARE_SECURE_COOKIES: "1"             # sign-in cookie only over HTTPS (localhost still works)
+      OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}      # optional: live hourly CPCB readings
+      AIRAWARE_SMTP_HOST: ${AIRAWARE_SMTP_HOST:-}
+      AIRAWARE_PUBLIC_URL: ${AIRAWARE_PUBLIC_URL:-}
     volumes: ["airaware-data:/app/data"]
+    networks: { airaware-net: { ipv4_address: 172.30.0.10 } }
     restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://172.30.0.10:8000
+    networks: { airaware-net: { ipv4_address: 172.30.0.20 } }
+    depends_on: [airaware]
+    restart: unless-stopped
+
+networks:
+  airaware-net:
+    ipam: { config: [{ subnet: 172.30.0.0/24 }] }
 volumes:
   airaware-data:
