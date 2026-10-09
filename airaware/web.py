@@ -4,6 +4,7 @@ A background thread keeps the data fresh: station archive, weather and CAMS fore
 retrain), and live CPCB readings every hour when OPENAQ_API_KEY is set.
 """
 
+import ipaddress
 import math
 import os
 import threading
@@ -207,24 +208,35 @@ def stations_api(city: str = "Pune"):
 
 
 AREA_PER_MINUTE = 30
+MAX_VISITORS = 10_000
 _area_hits: dict[str, list[float]] = {}
 _area_lock = threading.Lock()
 
 
+def visitor(host: str) -> str:
+    """The rate-limit key for an address. An IPv6 user usually controls a whole /64, so that is one visitor."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    return str(ipaddress.ip_network(f"{ip}/64", strict=False)) if ip.version == 6 else str(ip)
+
+
 def allow_area(client: str) -> bool:
     """At most AREA_PER_MINUTE area lookups a minute per visitor, so one device cannot use up the shared
-    allowance for outside services (see live.MIN_GAP) and leave everyone else without weather or place names."""
-    now = time.time()
+    allowance for outside services (see live.MIN_GAP) and leave everyone else without weather or place names.
+
+    Remembers at most MAX_VISITORS visitors, dropping the least recently seen. That bound is for memory only: the
+    hard limit on calls to outside services is live.MIN_GAP, which holds however many addresses a client uses.
+    """
+    now, key = time.time(), visitor(client)
     with _area_lock:
-        hits = [t for t in _area_hits.get(client, []) if now - t < 60]
-        if len(hits) >= AREA_PER_MINUTE:
-            _area_hits[client] = hits
-            return False
-        _area_hits[client] = hits + [now]
-        if len(_area_hits) > 10_000:  # forget idle visitors
-            for k in [k for k, v in _area_hits.items() if now - v[-1] >= 60]:
-                del _area_hits[k]
-        return True
+        hits = [t for t in _area_hits.pop(key, []) if now - t < 60]
+        allowed = len(hits) < AREA_PER_MINUTE
+        _area_hits[key] = hits + [now] if allowed else hits  # re-inserted, so the dict stays ordered by last seen
+        while len(_area_hits) > MAX_VISITORS:
+            _area_hits.pop(next(iter(_area_hits)))
+        return allowed
 
 
 @app.get("/api/area")

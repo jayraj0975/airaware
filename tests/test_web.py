@@ -95,3 +95,13 @@ def test_area_lookups_are_limited_per_visitor(monkeypatch):
     assert all(web.allow_area("1.2.3.4") for _ in range(web.AREA_PER_MINUTE))
     assert not web.allow_area("1.2.3.4")
     assert web.allow_area("5.6.7.8")  # other visitors are unaffected
+
+
+def test_area_limit_groups_ipv6_and_caps_memory(monkeypatch):
+    monkeypatch.setattr(web, "_area_hits", {})
+    assert all(web.allow_area(f"2001:db8::{i:x}") for i in range(web.AREA_PER_MINUTE))
+    assert not web.allow_area("2001:db8::ffff")  # same /64, same visitor
+    monkeypatch.setattr(web, "MAX_VISITORS", 5)
+    for i in range(20):
+        web.allow_area(f"10.0.0.{i}")
+    assert len(web._area_hits) == 5 and "10.0.0.19" in web._area_hits
