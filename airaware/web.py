@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -206,9 +206,32 @@ def stations_api(city: str = "Pune"):
         s[["station", "lat", "lon", "date", "aqi", "pm25", "pm10", "verdict", "correlation"]].assign(date=s["date"].astype(str).str[:16]))]}
 
 
+AREA_PER_MINUTE = 30
+_area_hits: dict[str, list[float]] = {}
+_area_lock = threading.Lock()
+
+
+def allow_area(client: str) -> bool:
+    """At most AREA_PER_MINUTE area lookups a minute per visitor, so one device cannot use up the shared
+    allowance for outside services (see live.MIN_GAP) and leave everyone else without weather or place names."""
+    now = time.time()
+    with _area_lock:
+        hits = [t for t in _area_hits.get(client, []) if now - t < 60]
+        if len(hits) >= AREA_PER_MINUTE:
+            _area_hits[client] = hits
+            return False
+        _area_hits[client] = hits + [now]
+        if len(_area_hits) > 10_000:  # forget idle visitors
+            for k in [k for k, v in _area_hits.items() if now - v[-1] >= 60]:
+                del _area_hits[k]
+        return True
+
+
 @app.get("/api/area")
-def area(lat: float = Query(ge=-90, le=90), lon: float = Query(ge=-180, le=180)):
+def area(request: Request, lat: float = Query(ge=-90, le=90), lon: float = Query(ge=-180, le=180)):
     """Everything about one point on the map: estimated AQI, its forecast, weather now and the nearest stations."""
+    if not allow_area(request.client.host if request.client else "?"):
+        raise HTTPException(429, "Too many area lookups. Wait a minute and try again.")
     city, km = live.nearest_city(lat, lon)
     if km > 60:
         raise HTTPException(404, "AirAware covers the Pune and Mumbai areas. Click closer to one of them.")

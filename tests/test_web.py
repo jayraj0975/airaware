@@ -88,3 +88,10 @@ def test_outbound_calls_are_throttled_and_cache_is_bounded(monkeypatch):
     for i in range(5):
         live.cached(("k", i), 60, lambda i=i: i)
     assert list(live._cache) == [("k", 2), ("k", 3), ("k", 4)]
+
+
+def test_area_lookups_are_limited_per_visitor(monkeypatch):
+    monkeypatch.setattr(web, "_area_hits", {})
+    assert all(web.allow_area("1.2.3.4") for _ in range(web.AREA_PER_MINUTE))
+    assert not web.allow_area("1.2.3.4")
+    assert web.allow_area("5.6.7.8")  # other visitors are unaffected

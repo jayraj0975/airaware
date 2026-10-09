@@ -68,7 +68,7 @@ def _json(url: str, params: dict, headers: dict | None = None) -> dict:
             raise Throttled(f"too many requests to {host}")
         _last_call[host] = time.time()
     req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers={"User-Agent": USER_AGENT, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=10) as r:  # short, so a slow service cannot tie up the server's threads
         return json.loads(r.read())
 
 
