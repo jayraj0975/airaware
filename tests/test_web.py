@@ -66,3 +66,25 @@ def test_openaq_parsing(monkeypatch):
     monkeypatch.setattr(live, "_json", fake)
     df = live.openaq_latest({1: "Test"}, key="k", pause=0)
     assert len(df) == 1 and df.loc[0, "pm25"] == 45 and df.loc[0, "aqi"] == 75  # 999 error code dropped
+
+
+def test_outbound_calls_are_throttled_and_cache_is_bounded(monkeypatch):
+    calls = []
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def read(self): return b"{}"
+
+    monkeypatch.setattr(live.urllib.request, "urlopen", lambda req, timeout: calls.append(req.full_url) or Resp())
+    monkeypatch.setattr(live, "_last_call", {})
+    live._json(live.GEOCODE, {"lat": 1})
+    with pytest.raises(live.Throttled):  # a second lookup within a second never leaves the machine
+        live._json(live.GEOCODE, {"lat": 2})
+    assert len(calls) == 1
+
+    monkeypatch.setattr(live, "_cache", {})
+    monkeypatch.setattr(live, "CACHE_SIZE", 3)
+    for i in range(5):
+        live.cached(("k", i), 60, lambda i=i: i)
+    assert list(live._cache) == [("k", 2), ("k", 3), ("k", 4)]

@@ -9,6 +9,7 @@ Sources, all free:
 import json
 import math
 import os
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -24,11 +25,21 @@ GEOCODE = "https://nominatim.openstreetmap.org/reverse"
 OPENAQ = "https://api.openaq.org/v3"
 USER_AGENT = "AirAware/1.0 (college air-quality project)"
 
+CACHE_SIZE = 2000
+# Fewest seconds between calls to each outside service, shared by all visitors, so a flood of map clicks cannot be
+# turned into a flood of requests to them. Nominatim's usage policy allows at most one request a second.
+MIN_GAP = {"nominatim.openstreetmap.org": 1.0, "api.open-meteo.com": 0.2, "api.openaq.org": 0.0}
+
 _cache: dict = {}
+_last_call: dict = {}
+_lock = threading.Lock()
 
 
 def cached(key, seconds: int, fetch):
-    """Keep a fetched value for `seconds`; on a failed refresh keep serving the old value."""
+    """Keep a fetched value for `seconds`; on a failed or throttled refresh keep serving the old value.
+
+    Holds at most CACHE_SIZE entries, dropping the oldest first.
+    """
     hit = _cache.get(key)
     if hit and time.time() - hit[0] < seconds:
         return hit[1]
@@ -38,11 +49,24 @@ def cached(key, seconds: int, fetch):
         if hit:
             return hit[1]
         raise
-    _cache[key] = (time.time(), value)
+    with _lock:
+        _cache.pop(key, None)
+        _cache[key] = (time.time(), value)
+        while len(_cache) > CACHE_SIZE:
+            _cache.pop(next(iter(_cache)))  # dicts keep insertion order, so this is the oldest
     return value
 
 
+class Throttled(OSError):
+    """Too soon after the last call to this service; callers treat it like a network failure."""
+
+
 def _json(url: str, params: dict, headers: dict | None = None) -> dict:
+    host = urllib.parse.urlsplit(url).hostname
+    with _lock:
+        if time.time() - _last_call.get(host, 0) < MIN_GAP.get(host, 0.5):
+            raise Throttled(f"too many requests to {host}")
+        _last_call[host] = time.time()
     req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers={"User-Agent": USER_AGENT, **(headers or {})})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read())
@@ -68,14 +92,14 @@ def nearest_city(lat: float, lon: float) -> tuple[str, float]:
 def weather_now(lat: float, lon: float) -> dict:
     """Current conditions plus the next 48 hours."""
     def fetch():
-        j = _json(WX_API, {"latitude": round(lat, 3), "longitude": round(lon, 3), "timezone": TZ, "forecast_days": 3,
+        j = _json(WX_API, {"latitude": round(lat, 2), "longitude": round(lon, 2), "timezone": TZ, "forecast_days": 3,
                            "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,"
                                       "wind_speed_10m,wind_direction_10m,surface_pressure",
                            "hourly": "temperature_2m,relative_humidity_2m,precipitation_probability,wind_speed_10m,boundary_layer_height"})
         h = pd.DataFrame(j["hourly"])
         h = h[pd.to_datetime(h["time"]) >= pd.Timestamp(j["current"]["time"]).floor("h")].head(48)
         return {"current": j["current"], "hourly": h.to_dict(orient="list")}
-    return cached(("wx", round(lat, 2), round(lon, 2)), 600, fetch)
+    return cached(("wx", round(lat, 2), round(lon, 2)), 900, fetch)  # weather does not change within ~1 km
 
 
 # ---------- any point on the map ----------
@@ -104,7 +128,7 @@ def idw(stations: pd.DataFrame, lat: float, lon: float, radius_km: float = 12, p
 def place_name(lat: float, lon: float) -> str:
     """The neighbourhood at a point, from OpenStreetMap; empty if the lookup fails."""
     def fetch():
-        a = _json(GEOCODE, {"lat": round(lat, 4), "lon": round(lon, 4), "format": "jsonv2", "zoom": 15}).get("address", {})
+        a = _json(GEOCODE, {"lat": round(lat, 3), "lon": round(lon, 3), "format": "jsonv2", "zoom": 15}).get("address", {})
         return ", ".join(dict.fromkeys(x for x in [a.get("suburb") or a.get("neighbourhood") or a.get("village") or a.get("town"),
                                                    a.get("city") or a.get("county")] if x))
     try:
