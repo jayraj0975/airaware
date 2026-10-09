@@ -5,13 +5,14 @@ Serves the JSON API under /api (interactive docs at /api/docs) and the React fro
 
 import logging
 import os
+import re
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from airaware.server import account, admin, db, public
@@ -126,7 +127,7 @@ if (DIST / "assets").exists():
 
 
 @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
-def spa(path: str):
+def spa(path: str, request: Request):
     """Static files from the build, and index.html for every app route (the React router takes it from there)."""
     if path.startswith("api/"):
         return JSONResponse({"detail": "Not found"}, status_code=404)
@@ -136,4 +137,16 @@ def spa(path: str):
     index = DIST / "index.html"
     if not index.exists():
         return JSONResponse({"detail": "Frontend not built. Run: cd frontend && npm install && npm run build"}, status_code=503)
-    return FileResponse(index)
+    return HTMLResponse(index.read_text().replace("__ORIGIN__", site_origin(request)))
+
+
+HOSTNAME = re.compile(r"^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$")
+
+
+def site_origin(request: Request) -> str:
+    """The site's own address for link previews (chat apps need absolute image URLs): AIRAWARE_PUBLIC_URL if set,
+    else this request's host, used only if it is a plain hostname so nothing can be injected into the page."""
+    if os.environ.get("AIRAWARE_PUBLIC_URL"):
+        return os.environ["AIRAWARE_PUBLIC_URL"].rstrip("/")
+    host = request.headers.get("host", "")
+    return f"{'https' if via_https(request) else request.url.scheme}://{host}" if HOSTNAME.match(host) else ""

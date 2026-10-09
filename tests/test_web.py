@@ -472,3 +472,12 @@ def test_rebuild_clock_survives_restarts(app):
     assert core.hours_since_rebuild() == float("inf")
     db.run("INSERT INTO jobs (kind, started_at, finished_at, ok) VALUES ('manual rebuild', ?, ?, 1)", (db.now(), db.now()))
     assert core.hours_since_rebuild() < 0.1
+
+
+def test_link_previews_use_a_safe_absolute_origin(app, monkeypatch, tmp_path):
+    (tmp_path / "index.html").write_text('<meta property="og:image" content="__ORIGIN__/og.png">')
+    monkeypatch.setattr(server, "DIST", tmp_path)
+    assert 'content="http://airaware.example/og.png"' in app.get("/", headers={"Host": "airaware.example"}).text
+    assert 'content="/og.png"' in app.get("/", headers={"Host": 'evil"><script>'}).text  # not a hostname: left relative
+    monkeypatch.setenv("AIRAWARE_PUBLIC_URL", "https://airaware.in/")
+    assert 'content="https://airaware.in/og.png"' in app.get("/me").text

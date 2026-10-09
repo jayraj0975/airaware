@@ -1,0 +1,7 @@
+# AirAware: public forecasts welcome; personal and admin pages are not for indexing.
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /me
+Disallow: /admin
+Disallow: /reset

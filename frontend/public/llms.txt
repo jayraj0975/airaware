@@ -1,0 +1,18 @@
+# AirAware
+
+> Air-quality (AQI) forecasts for any street in Pune and Mumbai, India, up to seven days ahead, built from 37 CPCB monitoring stations, live weather and the Copernicus CAMS particle forecast.
+
+Forecasts are estimates, not the official CPCB AQI and not medical advice. Each comes with a likely range and the chance of a Poor day.
+
+## Pages
+- [Today](/): city forecast, today hour by hour, any area on the map
+- [Insights](/explore): when in the day the air is cleanest, the Diwali effect, the year in air
+- [Science](/science): how the model works and how accurate it is
+- [Track record](/track-record): every published forecast scored against reality
+- [Privacy Notice](/privacy) and [Terms](/terms)
+
+## API (JSON, no key needed for public data)
+- [OpenAPI docs](/api/docs)
+- `GET /api/overview?city=Pune|Mumbai`: today, the week ahead, weather now
+- `GET /api/area?lat=..&lon=..`: forecast for any point in either city (rate-limited)
+- `GET /api/search?q=..&city=..`: find an area by name
