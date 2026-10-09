@@ -13,7 +13,7 @@ test('public pages load', async ({ page }) => {
   for (const [path, text] of [['/explore', 'When in the day is the air cleanest?'], ['/science', 'The science'],
     ['/track-record', 'Track record'], ['/about', 'Know your air, a week ahead'], ['/compare', 'Compare areas']]) {
     await page.goto(path)
-    await expect(page.getByText(text).first()).toBeVisible()
+    await expect(page.locator('main').getByText(text).first()).toBeVisible()  // not the collapsed phone menu
   }
 })
 

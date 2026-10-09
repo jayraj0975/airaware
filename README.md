@@ -117,7 +117,8 @@ grants admin on sign-up because it does not verify email ownership):
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
 cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
-.venv/bin/python -m pytest                                         # 33 tests
+.venv/bin/python -m pytest                                         # 33 backend tests
+cd frontend && npm run build && npx playwright test                # end-to-end, desktop and phone
 ```
 
 | Setting | Default | |
@@ -130,6 +131,9 @@ cd frontend && npm install && npm run dev                          # http://loca
 | `AIRAWARE_REBUILD_HOURS` | 6 | how often to download and retrain |
 
 API docs (OpenAPI): http://localhost:8000/api/docs.
+
+**CI** (GitHub Actions, every push): backend tests, frontend lint and type-checked build, end-to-end browser tests
+on desktop and phone sizes, and a Docker build that is started and smoke-tested.
 
 Other tools: `.venv/bin/streamlit run app.py` (analysis app with replay, what-if sliders and per-forecast
 explanations), `python -m airaware.model` (re-run the evaluation into reports/metrics.md), `python -m airaware.data`
@@ -270,6 +274,7 @@ frontend/src/           React app: pages (Home, Explore, Compare, Science, Track
 app.py                  Streamlit analysis app
 data/*.csv              cleaned daily, station and hourly tables (raw downloads cached in data/raw/)
 tests/                  model, cleaning, leakage, insights; server: auth, permissions, alerts, moderation, limits
+frontend/e2e/           browser tests: forecast, any area, sign-up, places, alerts, admin guard
 Dockerfile, compose.yaml  self-hosting
 ```
 
