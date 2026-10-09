@@ -14,6 +14,16 @@ DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as
 | 5 days ahead | 18.1 vs 25.3 (29% better) |
 | 80% forecast ranges | held the real AQI 85-88% of the time |
 
+![Today: the forecast, today hour by hour, and any area on the map](docs/screenshots/home.png)
+
+| Insights | Science |
+|---|---|
+| ![When the air is cleanest, the Diwali effect, the year in air](docs/screenshots/insights.png) | ![The model against baselines, error by horizon, what it relies on](docs/screenshots/science.png) |
+| **Your dashboard** | **Admin console** |
+| ![Saved places with forecasts, alerts and personal advice](docs/screenshots/dashboard.png) | ![Users, alerts, reports, forecast log and data freshness](docs/screenshots/admin.png) |
+
+<p align="center"><img src="docs/screenshots/mobile.png" width="260" alt="On a phone, installable as an app"></p>
+
 ## Features
 
 **For everyone**
@@ -27,6 +37,8 @@ DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as
 - **Science**: the model against baselines, error by horizon, what the model relies on, and the method.
 - **Track record**: every forecast the site publishes is logged before its day and scored against the real AQI once
   the stations report it.
+- **Today, hour by hour**: the day's forecast spread over the city's usual daily pattern, with the cleanest hours.
+- **Installable app**: add it to a phone's home screen; it opens offline with the last public forecast it saw.
 
 **With an account**
 - Saved places with their own forecasts, and **alerts** at a chosen AQI, raised once per day in the app (and by
@@ -96,7 +108,7 @@ grants admin on sign-up because it does not verify email ownership):
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
 cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
-.venv/bin/python -m pytest                                         # 26 tests
+.venv/bin/python -m pytest                                         # 28 tests
 ```
 
 | Setting | Default | |

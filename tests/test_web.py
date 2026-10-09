@@ -238,12 +238,16 @@ def test_outbound_calls_are_throttled_and_cache_is_bounded(monkeypatch):
         def __exit__(self, *a): pass
         def read(self): return b"{}"
 
+    waits = []
     monkeypatch.setattr(live.urllib.request, "urlopen", lambda req, timeout: calls.append(req.full_url) or Resp())
+    monkeypatch.setattr(live.time, "sleep", waits.append)
     monkeypatch.setattr(live, "_last_call", {})
-    live._json(live.GEOCODE, {"lat": 1})
-    with pytest.raises(live.Throttled):  # a second lookup within a second never leaves the machine
-        live._json(live.GEOCODE, {"lat": 2})
-    assert len(calls) == 1
+    for i in range(3):  # Nominatim: one a second, so these queue at 0 s, +1 s and +2 s
+        live._json(live.GEOCODE, {"lat": i})
+    assert len(calls) == 3 and [round(w) for w in waits] == [1, 2]
+    with pytest.raises(live.Throttled):  # the next would wait 3 s, more than MAX_WAIT: refused without a request
+        live._json(live.GEOCODE, {"lat": 9})
+    assert len(calls) == 3
 
     monkeypatch.setattr(live, "_cache", {})
     monkeypatch.setattr(live, "CACHE_SIZE", 3)

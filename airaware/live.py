@@ -27,7 +27,7 @@ USER_AGENT = "AirAware/1.0 (college air-quality project)"
 
 CACHE_SIZE = 2000
 # Fewest seconds between calls to each outside service, shared by all visitors, so a flood of map clicks cannot be
-# turned into a flood of requests to them. Nominatim's usage policy allows at most one request a second.
+# turned into a flood of requests to them (see _json). Nominatim's usage policy allows at most one request a second.
 MIN_GAP = {"nominatim.openstreetmap.org": 1.0, "api.open-meteo.com": 0.2, "api.openaq.org": 0.0}
 
 _cache: dict = {}
@@ -61,12 +61,24 @@ class Throttled(OSError):
     """Too soon after the last call to this service; callers treat it like a network failure."""
 
 
+MAX_WAIT = 2.0  # seconds a call may queue for its turn before it is refused
+
+
 def _json(url: str, params: dict, headers: dict | None = None) -> dict:
+    """GET a JSON API, spacing calls to each host by MIN_GAP.
+
+    Each call books the next free slot for its host and waits for it, so a burst of page loads is served a moment
+    later instead of failing; a call whose slot is more than MAX_WAIT away is refused (Throttled).
+    """
     host = urllib.parse.urlsplit(url).hostname
     with _lock:
-        if time.time() - _last_call.get(host, 0) < MIN_GAP.get(host, 0.5):
+        now = time.time()
+        slot = max(now, _last_call.get(host, 0) + MIN_GAP.get(host, 0.5))
+        if slot - now > MAX_WAIT:
             raise Throttled(f"too many requests to {host}")
-        _last_call[host] = time.time()
+        _last_call[host] = slot
+    if slot > now:
+        time.sleep(slot - now)
     req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers={"User-Agent": USER_AGENT, **(headers or {})})
     with urllib.request.urlopen(req, timeout=10) as r:  # short, so a slow service cannot tie up the server's threads
         return json.loads(r.read())
