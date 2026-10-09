@@ -31,13 +31,17 @@ TZ = "Asia/Kolkata"
 START = "2020-11-14"  # first full day of the IITM stations
 
 CITIES = {"Pune": (18.5204, 73.8567), "Mumbai": (19.0760, 72.8777)}
-# OpenAQ location ids of the CPCB continuous monitors inside each city (Navi Mumbai and Vasai left out).
+# OpenAQ location ids of the CPCB continuous monitors inside each city (Pune includes Pimpri-Chinchwad;
+# Navi Mumbai and Vasai left out of Mumbai). Found by scanning the archive's location ids for coordinates in each city.
 # OpenAQ re-listed many stations under new ids in February 2025; both ids are kept, and a station's
 # old and new ids are merged by name before averaging.
 STATIONS = {
     "Pune": {11608: "Bhosari", 11609: "Mhada Colony", 11610: "Transport Nagar-Nigdi", 11613: "Revenue Colony-Shivajinagar",
              3409331: "Bhosari", 3409438: "Katraj Dairy", 3409439: "Savitribai Phule Pune University",
-             3409523: "Bhumkar Nagar", 3409526: "Panchawati-Pashan"},
+             3409523: "Bhumkar Nagar", 3409526: "Panchawati-Pashan", 3410005: "Dhankawadi", 12042: "Alandi",
+             # Pimpri-Chinchwad, the twin city inside the Pune metro area
+             3409435: "Gavalinagar (PCMC)", 3409436: "Park Street Wakad (PCMC)", 3409437: "Thergaon (PCMC)",
+             3409528: "Savta Mali Nagar (PCMC)"},
     "Mumbai": {6927: "Colaba", 6945: "Kurla", 6948: "Airport T2", 6956: "Powai", 6959: "Worli", 6965: "Borivali East (MPCB)",
                6967: "Sion", 6987: "Vile Parle West", 11600: "Mazgaon", 11602: "Bandra Kurla Complex (IITM)", 11604: "Deonar",
                11605: "Navy Nagar-Colaba", 11606: "Borivali East (IITM)", 11611: "Malad West",

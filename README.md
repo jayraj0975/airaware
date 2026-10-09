@@ -29,7 +29,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 ## Data
 
-- **Air quality**: CPCB continuous monitoring stations (8 in Pune, 23 in Mumbai; Navi Mumbai and Vasai excluded),
+- **Air quality**: CPCB continuous monitoring stations (14 in Pune including Pimpri-Chinchwad, 23 in Mumbai; Navi Mumbai and Vasai excluded),
   15-minute readings from [OpenAQ's public archive](https://openaq.org) (`openaq-data-archive` on AWS, no account needed).
 - **Weather**: ERA5 reanalysis from [Open-Meteo](https://open-meteo.com) (no key): temperature, humidity, rain, wind,
   pressure and boundary-layer (mixing) height at each city centre. Open-Meteo's forecast fills the last few days ERA5
@@ -52,7 +52,7 @@ are not reliable enough to use: their units are mislabelled (CO in mg/m³ marked
 impossible (ozone below 1 µg/m³).
 
 **Coverage.** The archive is nearly empty for 2023–2024 and sparse before 2025. Dense data runs from
-February 2025 to October 2026. That gives about 1,445 city-days with an AQI.
+February 2025 to October 2026. That gives about 1,460 city-days with an AQI.
 
 ## Method
 
@@ -68,36 +68,36 @@ AQI changes slowly from day to day, so a model that predicts the AQI level direc
 "tomorrow = today". AirAware instead predicts the **change** from today, using ridge (linear) regression.
 
 **Walk-forward evaluation.** At the start of each month from October 2025, every method is retrained on every row whose
-target had already been measured, and then forecasts that month. This covers 658 next-day city forecasts up to
+target had already been measured, and then forecasts that month. This covers 660 next-day city forecasts up to
 5 October 2026, including winter 2025–26.
 
 | Method | MAE | RMSE | R² | Category accuracy | Poor-day recall |
 |---|---:|---:|---:|---:|---:|
-| Persistence (tomorrow = today) | 12.95 | 19.12 | 0.858 | 74.5% | 58.1% |
-| 7-day average | 18.52 | 25.83 | 0.741 | 67.9% | 32.3% |
-| Seasonal average (city, month) | 29.92 | 41.03 | 0.346 | 52.7% | 0% |
-| Linear regression on the AQI level | 14.12 | 20.21 | 0.841 | 77.4% | **74.2%** |
-| Gradient boosting on the change | 12.33 | 18.37 | 0.869 | 77.4% | 48.4% |
-| AirAware without tomorrow's weather | 12.74 | 18.55 | 0.866 | 76.9% | 61.3% |
-| **AirAware** (linear regression on the change) | **12.06** | **17.67** | **0.879** | **79.8%** | 64.5% |
+| Persistence (tomorrow = today) | 12.42 | 18.10 | 0.864 | 76.8% | 61.5% |
+| 7-day average | 17.95 | 25.51 | 0.730 | 66.5% | 11.5% |
+| Seasonal average (city, month) | 28.87 | 40.07 | 0.333 | 56.4% | 0% |
+| Linear regression on the AQI level | 13.63 | 19.43 | 0.843 | 77.4% | **65.4%** |
+| Gradient boosting on the change | 11.95 | 17.39 | 0.874 | 78.9% | 50.0% |
+| AirAware without tomorrow's weather | 12.30 | 17.57 | 0.872 | 76.4% | 57.7% |
+| **AirAware** (linear regression on the change) | **11.56** | **16.63** | **0.885** | **79.5%** | 61.5% |
 
 MAE is in AQI points. Poor-day recall is the share of days that were actually Poor or worse (AQI > 200) that the
 method also called Poor or worse.
 
 **Is the gain real?** A Diebold-Mariano test (absolute error, Newey-West variance over 7 days because daily errors are
-autocorrelated) gives statistic −2.62, p = 0.009: AirAware's lower error is statistically significant.
+autocorrelated) gives statistic −2.67, p = 0.008: AirAware's lower error is statistically significant.
 
 **Further ahead.** The same walk-forward test for each horizon, against repeating the last reading:
 
 | Days ahead | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| AirAware MAE | 12.1 | 16.5 | 18.9 | 20.5 | 21.0 | 21.8 | 22.3 |
-| Last reading repeated MAE | 13.0 | 18.3 | 21.5 | 24.0 | 25.8 | 26.7 | 26.7 |
-| AirAware 80% range coverage | 88% | 88% | 85% | 86% | 86% | 87% | 86% |
+| AirAware MAE | 11.6 | 16.3 | 19.0 | 20.6 | 21.3 | 22.3 | 22.6 |
+| Last reading repeated MAE | 12.4 | 17.9 | 21.0 | 23.3 | 25.3 | 26.4 | 26.7 |
+| AirAware 80% range coverage | 88% | 88% | 87% | 86% | 86% | 86% | 86% |
 
 **Uncertainty.** The 80% range is split conformal: the 10th and 90th percentiles of AirAware's own errors in earlier
 walk-forward months (in-sample errors until 60 exist). The chance of a Poor day is the share of those past errors that
-would lift the forecast above 200. On the test months the ranges held the real AQI 85-88% of the time, slightly more
+would lift the forecast above 200. On the test months the ranges held the real AQI 86-88% of the time, slightly more
 than the 80% promised.
 
 **Explanations.** AirAware is linear, so each forecast splits exactly into today's AQI, a baseline change, and one
@@ -112,19 +112,19 @@ push per input (coefficient × standardised input). The app shows the largest pu
   normal post-monsoon worsening, so this is an upper bound on the festival's own effect.
 - **Which particle.** PM10 (dust) sets the AQI on most days; PM2.5 (smoke) takes over in winter, on almost every
   December day in Pune.
-- **Station trust.** Over the last 90 days five Mumbai stations and one Pune station barely move with the rest of their
+- **Station trust.** Over the last 90 days five Mumbai stations and two Pune stations (Katraj Dairy, Thergaon) barely move with the rest of their
   city (correlation below 0.6), more likely faulty or badly sited sensors than different air.
 - **Cigarettes.** Berkeley Earth's rule of thumb, 22 µg/m³ of PM2.5 for a day ≈ one cigarette: the past year's air was
   about 670 cigarettes in Pune and 540 in Mumbai.
 
 What this shows:
 
-- AirAware beats "tomorrow = today" by about 7% on MAE and gets the AQI category right on 80% of days instead of 74%.
-  The advantage grows with the horizon: 13% at 3 days, 19% at 5.
-- Most of the next-day gain is in Pune: MAE 12.6 vs 14.4. In Mumbai it roughly ties persistence (11.6 vs 11.5).
-- Tomorrow's weather helps: without it, MAE rises from 12.06 to 12.74.
+- AirAware beats "tomorrow = today" by about 7% on MAE and gets the AQI category right on 80% of days instead of 77%.
+  The advantage grows with the horizon: 10% at 3 days, 16% at 5.
+- Most of the next-day gain is in Pune: MAE 11.6 vs 13.4. In Mumbai it ties persistence (11.5 vs 11.5).
+- Tomorrow's weather helps: without it, MAE rises from 11.56 to 12.30.
 - Temperature is the strongest weather input. Holding today fixed, the model expects worse air when tomorrow is warmer than today. This is an association learned from about 20 months of data, not a proven cause.
-- For catching Poor days, plain linear regression on the level does best (74%). That trade-off is a fair one to discuss in the viva.
+- For catching Poor days, plain linear regression on the level does best (65%). That trade-off is a fair one to discuss in the viva.
 
 ## Limitations
 
