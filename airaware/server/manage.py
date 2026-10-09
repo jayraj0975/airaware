@@ -2,6 +2,8 @@
 
     python -m airaware.server.manage create-admin you@example.com "Your Name"   # asks for the password
     python -m airaware.server.manage make-admin you@example.com                 # promote an existing account
+
+This is the only way to make an admin: the site does not verify email ownership, so it never grants admin on sign-up.
 """
 
 import getpass

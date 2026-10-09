@@ -9,10 +9,9 @@ from fastapi.testclient import TestClient
 
 os.environ["AIRAWARE_REFRESH"] = "0"
 os.environ["AIRAWARE_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
-os.environ["AIRAWARE_ADMIN_EMAILS"] = "boss@example.com"
 
 from airaware import live  # noqa: E402
-from airaware.server import app as server, auth, core, db, public  # noqa: E402
+from airaware.server import app as server, auth, core, db, manage, public  # noqa: E402
 
 H = {"X-AirAware": "1"}
 WEATHER = {"current": {"time": "2026-10-09T21:00", "temperature_2m": 27.0, "relative_humidity_2m": 50, "apparent_temperature": 28.0,
@@ -98,12 +97,25 @@ def test_password_is_hashed_and_session_token_not_stored(app):
     assert token and not db.one("SELECT 1 FROM sessions WHERE token_hash = ?", (token,))
 
 
-def test_login_lockout(app, monkeypatch):
-    monkeypatch.setattr(auth, "login_limiter", auth.LoginLimiter(limit=3))
+def test_login_lockout_is_durable_and_per_email(app, monkeypatch):
+    monkeypatch.setattr(auth, "LOGIN_LIMIT", 3)
+    signup(client(app), "target@example.com", password="right-password")
     c = client(app)
     for _ in range(3):
-        c.post("/api/auth/login", json={"email": "nobody@example.com", "password": "nope-nope"}, headers=H)
-    assert c.post("/api/auth/login", json={"email": "nobody@example.com", "password": "nope-nope"}, headers=H).status_code == 429
+        c.post("/api/auth/login", json={"email": "target@example.com", "password": "nope-nope"}, headers=H)
+    r = c.post("/api/auth/login", json={"email": "target@example.com", "password": "right-password"}, headers=H)
+    assert r.status_code == 429  # even the right password waits out the lockout
+    # the email's count holds whatever addresses the attempts come from, and lives in the database, not memory
+    for i in range(3):
+        db.audit("user.login_failed", None, "spray@example.com", f"198.51.100.{i}")
+    assert auth.login_blocked("203.0.113.9", "spray@example.com")
+    assert not auth.login_blocked("203.0.113.9", "someone-else@example.com")
+
+
+def test_ipv6_visitors_are_grouped_by_64():
+    assert auth.visitor("2001:db8::1") == auth.visitor("2001:db8::ffff:1") == "2001:db8::/64"
+    assert auth.visitor("2001:db8:0:1::1") != auth.visitor("2001:db8::1")
+    assert auth.visitor("10.1.2.3") == "10.1.2.3"
 
 
 def test_places_alerts_and_notifications(app):
@@ -144,7 +156,9 @@ def test_reports_and_admin_moderation(app):
 
     assert c.get("/api/admin/overview").status_code == 403
     boss = client(app)
-    assert signup(boss, "boss@example.com", name="Boss").json()["role"] == "admin"  # from AIRAWARE_ADMIN_EMAILS
+    assert signup(boss, "boss@example.com", name="Boss").json()["role"] == "user"  # signing up never makes an admin
+    assert boss.get("/api/admin/overview").status_code == 403
+    assert manage.main(["make-admin", "boss@example.com"]) == 0  # only the server's command line can
     ov = boss.get("/api/admin/overview").json()
     assert ov["counts"]["reports_pending"] >= 1 and ov["freshness"]
     pending = boss.get("/api/admin/reports?status=pending").json()

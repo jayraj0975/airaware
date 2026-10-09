@@ -3,7 +3,6 @@ services:
     build: .
     ports: ["8000:8000"]
     environment:
-      AIRAWARE_ADMIN_EMAILS: ${AIRAWARE_ADMIN_EMAILS:-}     # emails that become admins when they sign up
       OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}                   # optional: live hourly CPCB readings
       AIRAWARE_SECURE_COOKIES: ${AIRAWARE_SECURE_COOKIES:-0} # set to 1 behind HTTPS
       AIRAWARE_SMTP_HOST: ${AIRAWARE_SMTP_HOST:-}           # optional: email alerts

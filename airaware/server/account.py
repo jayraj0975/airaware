@@ -9,7 +9,7 @@ from airaware.aqi import HEALTH_GROUPS
 from airaware.data import CITIES
 from airaware.server import auth, db
 from airaware.server.auth import client_ip, require_user
-from airaware.server.core import upcoming
+from airaware.server.core import check_alerts, upcoming
 from airaware.server.public import forecast_rows, state
 
 router = APIRouter(prefix="/api")
@@ -64,32 +64,29 @@ def signup(body: SignUp, request: Request, response: Response):
     auth.check_new_password(body.password)
     if body.city not in CITIES:
         raise HTTPException(422, "Pick Pune or Mumbai.")
-    role = "admin" if email.lower() in auth.admin_emails() else "user"
-    try:
-        uid = db.run("INSERT INTO users (email, name, pw_hash, role, city, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                     (email, body.name.strip(), auth.hash_password(body.password), role, body.city, db.now()))
+    try:  # every sign-up is a plain user; admins are promoted from the server CLI (see auth.py)
+        uid = db.run("INSERT INTO users (email, name, pw_hash, city, created_at) VALUES (?, ?, ?, ?, ?)",
+                     (email, body.name.strip(), auth.hash_password(body.password), body.city, db.now()))
     except sqlite3.IntegrityError:
         raise HTTPException(409, "An account with that email already exists. Sign in instead.")
     auth.start_session(response, uid, request)
-    db.audit("user.signup", uid, f"{email} ({role})", client_ip(request))
+    db.audit("user.signup", uid, email, client_ip(request))
     return auth.public_user(db.one("SELECT * FROM users WHERE id = ?", (uid,)))
 
 
 @router.post("/auth/login")
 def login(body: SignIn, request: Request, response: Response):
-    ip, email = client_ip(request), body.email.strip().lower()
-    if auth.login_limiter.blocked(ip, email):
+    ip, email = auth.visitor(client_ip(request)), body.email.strip().lower()
+    if auth.login_blocked(ip, email):
         raise HTTPException(429, "Too many failed sign-ins. Wait 15 minutes and try again.")
     u = db.one("SELECT * FROM users WHERE email = ?", (email,))
     # Hash even when the email is unknown, so response time does not reveal which emails have accounts.
     ok = auth.verify_password(body.password, u["pw_hash"] if u else auth.hash_password("x"))
     if not u or not ok or u["disabled"]:
-        auth.login_limiter.fail(ip, email)
-        db.audit("user.login_failed", u["id"] if u else None, email, ip)
+        db.audit("user.login_failed", u["id"] if u else None, email, ip)  # login_blocked counts these
         raise HTTPException(401, "Wrong email or password." if not (u and ok) else "This account is disabled.")
-    auth.login_limiter.clear(email)
     auth.start_session(response, u["id"], request)
-    db.audit("user.login", u["id"], "", ip)
+    db.audit("user.login", u["id"], email, ip)  # a success resets the per-email count
     return auth.public_user(u)
 
 
@@ -200,8 +197,7 @@ def add_alert(body: Alert, request: Request, user: dict = Depends(require_user))
         raise HTTPException(422, f"You can have up to {MAX_ALERTS} alerts.")
     aid = db.run("INSERT INTO alerts (user_id, place_id, threshold, created_at) VALUES (?, ?, ?, ?)",
                  (user["id"], body.place_id, body.threshold, db.now()))
-    from airaware.server.core import check_alerts  # check straight away, so a bad day already in the forecast warns now
-    check_alerts(state(request))
+    check_alerts(state(request), alert_id=aid)  # only this alert, so a bad day already in the forecast warns now
     return {"id": aid}
 
 

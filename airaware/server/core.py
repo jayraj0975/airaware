@@ -137,12 +137,16 @@ def score_forecasts(daily: pd.DataFrame) -> int:
 
 # ---------- alerts ----------
 
-def check_alerts(state: State) -> int:
-    """Warn each user once per target day when a saved place is forecast to reach their threshold today or tomorrow."""
+def check_alerts(state: State, alert_id: int | None = None) -> int:
+    """Warn each user once per target day when a saved place is forecast to reach their threshold today or tomorrow.
+
+    The background jobs check every alert; a request that creates an alert checks only that one.
+    """
     sent = 0
-    for a in db.rows("""SELECT a.*, p.name AS place, p.lat, p.lon, u.email, u.name AS user_name, u.health, u.email_alerts
-                        FROM alerts a JOIN places p ON p.id = a.place_id JOIN users u ON u.id = a.user_id
-                        WHERE a.active = 1 AND u.disabled = 0"""):
+    only = "AND a.id = ?" if alert_id is not None else ""
+    for a in db.rows(f"""SELECT a.*, p.name AS place, p.lat, p.lon, u.email, u.name AS user_name, u.health, u.email_alerts
+                         FROM alerts a JOIN places p ON p.id = a.place_id JOIN users u ON u.id = a.user_id
+                         WHERE a.active = 1 AND u.disabled = 0 {only}""", (alert_id,) if alert_id is not None else ()):
         area = state.area(a["lat"], a["lon"])
         if area is None:
             continue

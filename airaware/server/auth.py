@@ -5,7 +5,9 @@
   cannot be replayed as logins. Sessions last 30 days and are deleted on logout or password change.
 - Cross-site requests: every state-changing API call must carry the X-AirAware header (see app.py). Browsers do not
   let another site add custom headers without a CORS preflight, which this API never grants.
-- Brute force: at most 10 failed logins per 15 minutes per IP and per email.
+- Brute force: at most 10 failed logins per 15 minutes per IP (per /64 for IPv6) and per email, counted durably.
+- Admins are made only from the server's command line (manage.py), never by signing up with a particular email:
+  the site does not verify email ownership, so an email list would let anyone claim admin.
 """
 
 import hashlib
@@ -13,8 +15,7 @@ import hmac
 import os
 import re
 import secrets
-import threading
-import time
+import ipaddress
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, Response
@@ -112,35 +113,26 @@ def public_user(u: dict) -> dict:
         "health": [h for h in u["health"].split(",") if h]}
 
 
-class LoginLimiter:
-    """Counts failed logins per key in a sliding window."""
-
-    def __init__(self, limit: int = 10, window: int = 900):
-        self.limit, self.window, self.fails, self.lock = limit, window, {}, threading.Lock()
-
-    def blocked(self, *keys: str) -> bool:
-        now = time.time()
-        with self.lock:
-            return any(len([t for t in self.fails.get(k, []) if now - t < self.window]) >= self.limit for k in keys)
-
-    def fail(self, *keys: str) -> None:
-        now = time.time()
-        with self.lock:
-            for k in keys:
-                self.fails[k] = [t for t in self.fails.get(k, []) if now - t < self.window] + [now]
-            if len(self.fails) > 50_000:  # forget the oldest keys under a flood of addresses
-                for k in list(self.fails)[:10_000]:
-                    del self.fails[k]
-
-    def clear(self, *keys: str) -> None:
-        with self.lock:
-            for k in keys:
-                self.fails.pop(k, None)
+LOGIN_LIMIT = 10
+LOGIN_WINDOW_MINUTES = 15
 
 
-login_limiter = LoginLimiter()
+def visitor(host: str) -> str:
+    """The rate-limit key for an address. An IPv6 user usually controls a whole /64, so that is one visitor."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    return str(ipaddress.ip_network(f"{ip}/64", strict=False)) if ip.version == 6 else str(ip)
 
 
-def admin_emails() -> set[str]:
-    """Emails that become admins when they sign up (AIRAWARE_ADMIN_EMAILS, comma-separated)."""
-    return {e.strip().lower() for e in os.environ.get("AIRAWARE_ADMIN_EMAILS", "").split(",") if e.strip()}
+def login_blocked(ip_key: str, email: str) -> bool:
+    """True after LOGIN_LIMIT failed sign-ins in the window from this visitor, or against this email since its last
+    successful sign-in. Failures are counted from the audit table, so they survive restarts and no flood of other
+    addresses can push them out of memory."""
+    since = (datetime.now(timezone.utc) - timedelta(minutes=LOGIN_WINDOW_MINUTES)).isoformat(timespec="seconds")
+    by_ip = db.one("SELECT COUNT(*) AS n FROM audit WHERE action = 'user.login_failed' AND ip = ? AND at >= ?", (ip_key, since))["n"]
+    by_email = db.one("""SELECT COUNT(*) AS n FROM audit WHERE action = 'user.login_failed' AND detail = ? AND at >= ?
+                         AND at > COALESCE((SELECT MAX(at) FROM audit WHERE action = 'user.login' AND detail = ?), '')""",
+                      (email, since, email))["n"]
+    return by_ip >= LOGIN_LIMIT or by_email >= LOGIN_LIMIT

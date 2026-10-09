@@ -88,6 +88,7 @@ CREATE INDEX IF NOT EXISTS alerts_user ON alerts(user_id);
 CREATE INDEX IF NOT EXISTS notes_user ON notifications(user_id, read);
 CREATE INDEX IF NOT EXISTS reports_status ON reports(status, city, created_at);
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS audit_action ON audit(action, at);
 """
 
 

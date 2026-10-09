@@ -69,8 +69,9 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
 - Sessions in HttpOnly SameSite cookies; only a hash of each token is stored. Sessions are cleared on logout,
   password change and disable.
 - Every write needs an `X-AirAware` header, which blocks cross-site requests.
-- Limits: failed sign-ins (10 per 15 minutes per IP and per email); area lookups per visitor (30 a minute, IPv6 by
-  /64); outside services rate-capped.
+- Limits: failed sign-ins (10 per 15 minutes per IP, IPv6 by /64, and per email, counted durably in the database);
+  area lookups per visitor (30 a minute); outside services rate-capped.
+- Admins are made only from the server command line, never by signing up with a particular email.
 - Security headers (CSP, frame denial, nosniff).
 - Per-user ownership checks on every place, alert and notification. The container runs as a non-root user.
 
@@ -80,12 +81,13 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
 
 ```sh
 docker build -t airaware . && docker run -d --name airaware --restart unless-stopped -p 8000:8000 \
-  -v airaware-v2:/app/data -e AIRAWARE_ADMIN_EMAILS=you@example.com airaware
-# or: AIRAWARE_ADMIN_EMAILS=you@example.com docker compose up -d
+  -v airaware-v2:/app/data airaware
+# or: docker compose up -d
 ```
 
-Open http://localhost:8000 and sign up with the admin email to get the admin console. To promote an existing
-account: `docker exec -it airaware python -m airaware.server.manage make-admin you@example.com`.
+Open http://localhost:8000 and sign up. Then make yourself an admin from the server (the only way; the site never
+grants admin on sign-up because it does not verify email ownership):
+`docker exec airaware python -m airaware.server.manage make-admin you@example.com`.
 
 **Development:**
 
@@ -93,12 +95,11 @@ account: `docker exec -it airaware python -m airaware.server.manage make-admin y
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
 cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
-.venv/bin/python -m pytest                                         # 22 tests
+.venv/bin/python -m pytest                                         # 23 tests
 ```
 
 | Setting | Default | |
 |---|---|---|
-| `AIRAWARE_ADMIN_EMAILS` | none | comma-separated emails that become admins on sign-up |
 | `OPENAQ_API_KEY` | none | live hourly CPCB readings (free key from explore.openaq.org) |
 | `AIRAWARE_SECURE_COOKIES` | 0 | set to 1 when served over HTTPS |
 | `AIRAWARE_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | none | email alerts |

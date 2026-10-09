@@ -6,7 +6,6 @@ import threading
 import time
 from datetime import date
 
-import ipaddress
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -17,7 +16,7 @@ from airaware.data import CITIES, STATIONS
 from airaware.insights import best_hours, cigarettes, diwali_effect, dominant, station_agreement
 from airaware.model import AIRAWARE, PERSISTENCE, TEST_FROM, p_text
 from airaware.server import db
-from airaware.server.auth import current_user, require_user
+from airaware.server.auth import current_user, require_user, visitor
 from airaware.server.core import upcoming
 
 router = APIRouter(prefix="/api")
@@ -77,15 +76,6 @@ AREA_PER_MINUTE = 30
 MAX_VISITORS = 10_000
 _hits: dict[str, list[float]] = {}
 _hits_lock = threading.Lock()
-
-
-def visitor(host: str) -> str:
-    """The rate-limit key for an address. An IPv6 user usually controls a whole /64, so that is one visitor."""
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return host
-    return str(ipaddress.ip_network(f"{ip}/64", strict=False)) if ip.version == 6 else str(ip)
 
 
 def allow(client: str, per_minute: int = AREA_PER_MINUTE) -> bool:
