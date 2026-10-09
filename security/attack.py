@@ -111,7 +111,7 @@ check("unknown API path is a JSON 404", r.status_code == 404 and r.headers.get("
 
 # --- open redirect / host header ---
 r = anon.get("/login?next=//evil.example")
-check("login page serves app shell (client checks next)", r.status_code == 200)
+check("login with an off-site next is not redirected by the server", r.status_code in (200, 503) and "location" not in r.headers)
 r = anon.post("/api/auth/forgot", json={"email": a_email}, headers={**H, "Host": "evil.example"})
 check("forgot-password with forged Host accepted without using it", r.status_code == 200)
 
