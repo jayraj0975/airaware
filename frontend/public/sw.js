@@ -2,8 +2,10 @@
 // - /assets/* (hashed, never change): cache first.
 // - pages: network first, falling back to the cached app shell.
 // - public API reads (forecasts, stations, insights): network first, falling back to the last copy.
-// - anything personal (/api/me, /api/auth, /api/admin) and every write: never cached.
-const VERSION = 'airaware-v1'
+// - anything personal (/api/me, /api/auth, /api/admin, and any response the server marks X-AirAware-Personal because
+//   it was tailored to the signed-in user's health profile) and every write: never cached.
+// - signing out (a message from the page) empties the cache.
+const VERSION = 'airaware-v2'
 const PUBLIC_API = ['/api/status', '/api/overview', '/api/stations', '/api/insights', '/api/model', '/api/reports', '/api/track-record']
 
 self.addEventListener('install', (e) => {
@@ -20,7 +22,7 @@ async function networkFirst(request, fallbackUrl) {
   const cache = await caches.open(VERSION)
   try {
     const response = await fetch(request)
-    if (response.ok) cache.put(request, response.clone())
+    if (response.ok && !response.headers.has('X-AirAware-Personal')) cache.put(request, response.clone())
     return response
   } catch (err) {
     const hit = (await cache.match(request)) || (fallbackUrl && (await cache.match(fallbackUrl)))
@@ -39,4 +41,8 @@ self.addEventListener('fetch', (e) => {
   } else if (e.request.mode === 'navigate') {
     e.respondWith(networkFirst(e.request, '/'))
   }
+})
+
+self.addEventListener('message', (e) => {
+  if (e.data === 'signed-out') e.waitUntil(caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))))
 })

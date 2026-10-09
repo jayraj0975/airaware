@@ -273,3 +273,11 @@ def test_hour_shape_keeps_the_daily_mean():
     profile = pd.DataFrame({"city": "Pune", "month": 1, "hour": range(24), "aqi": [100.0] * 12 + [200.0] * 12})
     h = public.hour_shape(profile, "Pune", pd.Timestamp("2026-01-05"), 90.0)
     assert len(h) == 24 and abs(sum(x["aqi"] for x in h) / 24 - 90) < 1e-9 and h[0]["aqi"] == 60 and h[23]["aqi"] == 120
+
+
+def test_personal_responses_are_marked_for_the_service_worker(app):
+    assert "x-airaware-personal" not in app.get("/api/overview?city=Pune").headers
+    c = client(app)
+    signup(c, "private@example.com")
+    assert c.get("/api/overview?city=Pune").headers["x-airaware-personal"] == "1"
+    assert c.get("/api/area?lat=18.52&lon=73.85").headers["x-airaware-personal"] == "1"

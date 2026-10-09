@@ -10,6 +10,7 @@ ChartJS.defaults.font.family = 'Inter, system-ui, sans-serif'
 ChartJS.defaults.color = '#64748b'
 ChartJS.defaults.borderColor = 'rgba(100,116,139,.15)'
 ChartJS.defaults.maintainAspectRatio = false
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) ChartJS.defaults.animation = false
 
 export function ForecastChart({ history, forecast }: { history: { date: string; aqi: number }[]; forecast: ForecastDay[] }) {
   const n = history.length

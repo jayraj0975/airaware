@@ -162,7 +162,7 @@ function Security() {
   const remove = async () => {
     const password = prompt('This deletes your account, places and alerts for good. Type your password to confirm:')
     if (!password) return
-    try { await api.del('/api/me', { email: user!.email, password }); setUser(null); nav('/') } catch (e) { setMsg((e as Error).message) }
+    try { await api.del('/api/me', { email: user!.email, password }); navigator.serviceWorker?.controller?.postMessage('signed-out'); setUser(null); nav('/') } catch (e) { setMsg((e as Error).message) }
   }
   return (
     <Card title="Account and security" hint={`Signed in as ${user!.email}`}>

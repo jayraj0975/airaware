@@ -11,6 +11,7 @@ export default function Shell() {
   const nav = useNavigate()
   const signOut = async () => {
     await api.post('/api/auth/logout').catch(() => undefined)
+    navigator.serviceWorker?.controller?.postMessage('signed-out')  // drop anything cached while signed in
     setUser(null)
     nav('/')
   }

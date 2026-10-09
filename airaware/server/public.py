@@ -8,7 +8,7 @@ from datetime import date
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from airaware import live
 from airaware.aqi import ADVICE, CATEGORIES, HEALTH_GROUPS, category, personal_advice
@@ -132,9 +132,16 @@ def status(request: Request):
                   "health_groups": HEALTH_GROUPS, "report_kinds": REPORT_KINDS})
 
 
+def personal(response: Response, user: dict | None) -> None:
+    """Marks a response that depends on who is signed in, so the service worker never caches it (see sw.js)."""
+    if user:
+        response.headers["X-AirAware-Personal"] = "1"
+
+
 @router.get("/overview")
-def overview(request: Request, city: str = "Pune", user: dict | None = Depends(current_user)):
+def overview(request: Request, response: Response, city: str = "Pune", user: dict | None = Depends(current_user)):
     check_city(city)
+    personal(response, user)
     s = state(request)
     with s.lock:
         d = s.forecast_daily[s.forecast_daily["city"] == city]
@@ -173,9 +180,10 @@ def stations_api(request: Request, city: str = "Pune"):
 
 
 @router.get("/area", dependencies=[Depends(limited)])
-def area(request: Request, lat: float = Query(ge=-90, le=90), lon: float = Query(ge=-180, le=180),
+def area(request: Request, response: Response, lat: float = Query(ge=-90, le=90), lon: float = Query(ge=-180, le=180),
          user: dict | None = Depends(current_user)):
     """Everything about one point: estimated AQI, its forecast, weather now, nearest stations and recent reports."""
+    personal(response, user)
     a = state(request).area(lat, lon)
     if a is None:
         raise HTTPException(404, "AirAware covers the Pune and Mumbai areas. Pick a spot closer to one of them.")
