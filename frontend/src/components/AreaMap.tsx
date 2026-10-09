@@ -1,5 +1,5 @@
 import 'leaflet/dist/leaflet.css'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import type { Report, Station } from '../api'
 import { dateTime, fmt } from '../util'
@@ -26,15 +26,42 @@ function Clicks({ onPick }: { onPick?: (lat: number, lon: number) => void }) {
 
 function LocateButton({ onPick }: { onPick?: (lat: number, lon: number) => void }) {
   const map = useMap()
+  const [locating, setLocating] = useState(false)
   if (!onPick || !('geolocation' in navigator)) return null
+  const locate = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!window.isSecureContext) {
+      toast('Location access needs a secure HTTPS connection. Search an area or tap the map instead.', 'error')
+      return
+    }
+    if (locating) return
+    setLocating(true)
+    navigator.geolocation.getCurrentPosition((p) => {
+      const lat = p.coords.latitude
+      const lon = p.coords.longitude
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+        toast('Your device returned an invalid location. Search an area or tap the map instead.', 'error')
+        setLocating(false)
+        return
+      }
+      map.setView([lat, lon], 13)
+      onPick(lat, lon)
+      setLocating(false)
+    }, (err) => {
+      const message = err.code === err.PERMISSION_DENIED
+        ? 'Location permission is blocked. Allow it for this site in your browser settings, or search an area instead.'
+        : err.code === err.TIMEOUT
+          ? 'Your device took too long to find your location. Try again near a window, or search an area.'
+          : 'Your device could not determine your location. Check device location settings, or search an area instead.'
+      toast(message, 'error')
+      setLocating(false)
+    }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 })
+  }
   return (
-    <button type="button" className="locate" title="Use my location" onClick={(e) => {
-      e.stopPropagation()
-      navigator.geolocation.getCurrentPosition((p) => {
-        map.setView([p.coords.latitude, p.coords.longitude], 13)
-        onPick(p.coords.latitude, p.coords.longitude)
-      }, () => toast('Could not get your location. Allow location access, or search or click the map instead.', 'error'))
-    }}>◎ My location</button>
+    <button type="button" className="locate" title="Use my location" aria-live="polite" disabled={locating} onClick={locate}>
+      {locating ? 'Finding location…' : '◎ My location'}
+    </button>
   )
 }
 
