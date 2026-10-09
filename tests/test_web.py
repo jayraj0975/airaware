@@ -1,50 +1,184 @@
-"""API smoke test on the committed data, with the network calls stubbed out."""
+"""Server tests on the committed data, with a throwaway database and the network calls stubbed out."""
 
 import os
+import tempfile
 
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
 os.environ["AIRAWARE_REFRESH"] = "0"
+os.environ["AIRAWARE_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
+os.environ["AIRAWARE_ADMIN_EMAILS"] = "boss@example.com"
 
-from airaware import live, web  # noqa: E402
+from airaware import live  # noqa: E402
+from airaware.server import app as server, auth, core, db, public  # noqa: E402
+
+H = {"X-AirAware": "1"}
+WEATHER = {"current": {"time": "2026-10-09T21:00", "temperature_2m": 27.0, "relative_humidity_2m": 50, "apparent_temperature": 28.0,
+                       "precipitation": 0, "weather_code": 0, "wind_speed_10m": 4.0, "wind_direction_10m": 270, "surface_pressure": 950},
+           "hourly": {"time": ["2026-10-09T21:00"], "temperature_2m": [27.0]}}
 
 
 @pytest.fixture(scope="module")
-def client():
-    weather = {"current": {"time": "2026-10-09T21:00", "temperature_2m": 27.0, "relative_humidity_2m": 50, "apparent_temperature": 28.0,
-                           "precipitation": 0, "weather_code": 0, "wind_speed_10m": 4.0, "wind_direction_10m": 270, "surface_pressure": 950},
-               "hourly": {"time": ["2026-10-09T21:00"], "temperature_2m": [27.0]}}
+def app():
     mp = pytest.MonkeyPatch()
-    mp.setattr(live, "weather_now", lambda lat, lon: weather)
+    mp.setattr(live, "weather_now", lambda lat, lon: WEATHER)
     mp.setattr(live, "place_name", lambda lat, lon: "Test Nagar, Pune")
-    with TestClient(web.app) as c:
+    with TestClient(server.app) as c:
         yield c
     mp.undo()
 
 
-def test_pages_and_api(client):
-    assert client.get("/").status_code == 200
-    assert client.get("/static/app.js").status_code == 200
-    status = client.get("/api/status").json()
-    assert set(status["cities"]) == {"Pune", "Mumbai"} and status["live_readings"] is False
+def client(app):
+    """A fresh browser: its own cookie jar on the same app."""
+    return TestClient(server.app)
 
-    o = client.get("/api/overview?city=Pune").json()
+
+def signup(c, email, name="Asha", password="correct horse", city="Pune"):
+    return c.post("/api/auth/signup", json={"email": email, "name": name, "password": password, "city": city}, headers=H)
+
+
+def test_public_pages_and_api(app):
+    status = app.get("/api/status").json()
+    assert set(status["cities"]) == {"Pune", "Mumbai"} and status["live_readings"] is False and "asthma" in status["health_groups"]
+    o = app.get("/api/overview?city=Pune").json()
     assert o["forecast"] and o["measured"]["aqi"] > 0 and o["weather"]["current"]["temperature_2m"] == 27.0
-    assert client.get("/api/overview?city=Delhi").status_code == 404
-
-    s = client.get("/api/stations?city=Pune").json()
+    assert app.get("/api/overview?city=Delhi").status_code == 404
+    s = app.get("/api/stations?city=Pune").json()
     assert s["source"] == "archive" and all(st["category"]["name"] for st in s["stations"])
-
-    a = client.get("/api/area?lat=18.507&lon=73.807").json()
+    a = app.get("/api/area?lat=18.507&lon=73.807").json()
     assert a["city"] == "Pune" and a["place"] == "Test Nagar, Pune" and a["measured"]["used"] >= 1 and a["forecast"]
-    assert client.get("/api/area?lat=28.6&lon=77.2").status_code == 404  # Delhi is outside the coverage
-
-    m = client.get("/api/model").json()
+    assert app.get("/api/area?lat=28.6&lon=77.2").status_code == 404
+    m = app.get("/api/model").json()
     assert m["dm"]["p"] < 0.05 and len(m["horizons"]) == 14
-    i = client.get("/api/insights?city=Mumbai").json()
-    assert len(i["hourly"]) == 12 * 24 and i["cigarettes_year"] > 0
+    i = app.get("/api/insights?city=Mumbai").json()
+    assert len(i["hourly"]) == 12 * 24 and i["cigarettes_year"] > 0 and len(i["weekday"]) == 7
+    t = app.get("/api/track-record").json()
+    assert t["pending"] > 0  # startup logged the current forecasts
+    assert app.get("/api/health").json() == {"ok": True}
+
+
+def test_writes_need_the_header(app):
+    r = app.post("/api/auth/signup", json={"email": "x@example.com", "name": "X", "password": "longenough"})
+    assert r.status_code == 403  # no X-AirAware header: a cross-site form cannot do this
+
+
+def test_signup_login_logout_and_profile(app):
+    c = client(app)
+    r = signup(c, "asha@example.com")
+    assert r.status_code == 201 and r.json()["role"] == "user"
+    assert signup(client(app), "ASHA@example.com").status_code == 409  # emails are case-insensitive
+    assert signup(client(app), "bad-email").status_code == 422
+    assert signup(client(app), "short@example.com", password="1234").status_code == 422
+
+    me = c.get("/api/auth/me").json()
+    assert me["user"]["email"] == "asha@example.com" and me["unread"] == 0
+    p = c.patch("/api/me", json={"health": ["asthma"], "city": "Mumbai"}, headers=H).json()
+    assert p["health"] == ["asthma"] and p["city"] == "Mumbai"
+    assert c.patch("/api/me", json={"health": ["vampire"]}, headers=H).status_code == 422
+
+    # personal advice follows the profile: the same forecast reads stricter for someone with asthma
+    o = c.get("/api/overview?city=Pune").json()
+    assert all("personal" in f for f in o["forecast"])
+
+    c.post("/api/auth/logout", headers=H)
+    assert c.get("/api/auth/me").json()["user"] is None
+    assert c.post("/api/auth/login", json={"email": "asha@example.com", "password": "wrong password"}, headers=H).status_code == 401
+    assert c.post("/api/auth/login", json={"email": "Asha@Example.com", "password": "correct horse"}, headers=H).status_code == 200
+    assert c.get("/api/auth/me").json()["user"]["name"] == "Asha"
+
+
+def test_password_is_hashed_and_session_token_not_stored(app):
+    c = client(app)
+    signup(c, "hash@example.com", password="s3cret-pass")
+    u = db.one("SELECT pw_hash FROM users WHERE email = ?", ("hash@example.com",))
+    assert u["pw_hash"].startswith("scrypt$") and "s3cret" not in u["pw_hash"]
+    token = c.cookies.get(auth.COOKIE)
+    assert token and not db.one("SELECT 1 FROM sessions WHERE token_hash = ?", (token,))
+
+
+def test_login_lockout(app, monkeypatch):
+    monkeypatch.setattr(auth, "login_limiter", auth.LoginLimiter(limit=3))
+    c = client(app)
+    for _ in range(3):
+        c.post("/api/auth/login", json={"email": "nobody@example.com", "password": "nope-nope"}, headers=H)
+    assert c.post("/api/auth/login", json={"email": "nobody@example.com", "password": "nope-nope"}, headers=H).status_code == 429
+
+
+def test_places_alerts_and_notifications(app):
+    c = client(app)
+    signup(c, "places@example.com")
+    assert c.get("/api/me/places").status_code == 200
+    assert client(app).get("/api/me/places").status_code == 401
+    pid = c.post("/api/me/places", json={"name": "Home", "lat": 18.52, "lon": 73.85}, headers=H).json()["id"]
+    assert c.post("/api/me/places", json={"name": "Delhi", "lat": 28.6, "lon": 77.2}, headers=H).status_code == 422
+    places = c.get("/api/me/places").json()
+    assert places[0]["name"] == "Home" and places[0]["forecast"]
+
+    # an alert at the lowest threshold fires straight away, once per target day
+    aid = c.post("/api/me/alerts", json={"place_id": pid, "threshold": 50}, headers=H).json()["id"]
+    notes = c.get("/api/me/notifications").json()
+    assert len(notes) == 1 and "Home" in notes[0]["title"]
+    core.check_alerts(server.app.state.core)
+    assert len(c.get("/api/me/notifications").json()) == 1
+    assert c.get("/api/auth/me").json()["unread"] == 1
+    c.post("/api/me/notifications/read", headers=H)
+    assert c.get("/api/auth/me").json()["unread"] == 0
+
+    other = client(app)
+    signup(other, "intruder@example.com")
+    assert other.delete(f"/api/me/alerts/{aid}", headers=H).status_code == 404  # cannot touch someone else's alert
+    assert other.post("/api/me/alerts", json={"place_id": pid, "threshold": 100}, headers=H).status_code == 404
+    assert c.delete(f"/api/me/places/{pid}", headers=H).json() == {"ok": True}
+    assert db.one("SELECT COUNT(*) AS n FROM alerts WHERE id = ?", (aid,))["n"] == 0  # alerts go with their place
+
+
+def test_reports_and_admin_moderation(app):
+    c = client(app)
+    signup(c, "reporter@example.com")
+    assert client(app).post("/api/reports", json={"lat": 18.52, "lon": 73.85, "kind": "burning"}, headers=H).status_code == 401
+    assert c.post("/api/reports", json={"lat": 18.52, "lon": 73.85, "kind": "aliens"}, headers=H).status_code == 422
+    rid = c.post("/api/reports", json={"lat": 18.52, "lon": 73.85, "kind": "burning", "note": "Leaves on fire"}, headers=H).json()["id"]
+    assert app.get("/api/reports?city=Pune").json() == []  # not public until approved
+
+    assert c.get("/api/admin/overview").status_code == 403
+    boss = client(app)
+    assert signup(boss, "boss@example.com", name="Boss").json()["role"] == "admin"  # from AIRAWARE_ADMIN_EMAILS
+    ov = boss.get("/api/admin/overview").json()
+    assert ov["counts"]["reports_pending"] >= 1 and ov["freshness"]
+    pending = boss.get("/api/admin/reports?status=pending").json()
+    assert any(r["id"] == rid and r["author"] == "reporter@example.com" for r in pending)
+    boss.patch(f"/api/admin/reports/{rid}", json={"status": "approved"}, headers=H)
+    assert app.get("/api/reports?city=Pune").json()[0]["note"] == "Leaves on fire"
+    assert app.get("/api/area?lat=18.52&lon=73.85").json()["reports"]
+
+    reporter_id = db.one("SELECT id FROM users WHERE email = ?", ("reporter@example.com",))["id"]
+    boss.patch(f"/api/admin/users/{reporter_id}", json={"disabled": True}, headers=H)
+    assert c.get("/api/auth/me").json()["user"] is None  # disabling ends their sessions
+    me_id = db.one("SELECT id FROM users WHERE email = ?", ("boss@example.com",))["id"]
+    assert boss.patch(f"/api/admin/users/{me_id}", json={"role": "user"}, headers=H).status_code == 422
+    assert any(a["action"] == "admin.disable" for a in boss.get("/api/admin/audit").json())
+    assert boss.get("/api/admin/stations").json() and boss.get("/api/admin/jobs").json()[-1]["kind"] == "startup"
+
+
+def test_delete_account(app):
+    c = client(app)
+    signup(c, "leaver@example.com", password="goodbye-123")
+    assert c.request("DELETE", "/api/me", json={"email": "leaver@example.com", "password": "wrong-one"}, headers=H).status_code == 403
+    assert c.request("DELETE", "/api/me", json={"email": "leaver@example.com", "password": "goodbye-123"}, headers=H).json() == {"ok": True}
+    assert not db.one("SELECT 1 FROM users WHERE email = ?", ("leaver@example.com",))
+
+
+def test_forecast_log_is_scored_when_actuals_arrive(app):
+    s = server.app.state.core
+    row = db.one("SELECT * FROM forecast_log WHERE actual IS NULL LIMIT 1")
+    d = s.daily.copy()
+    d.loc[(d["city"] == row["city"]) & (d["date"] == pd.Timestamp(row["target"])), "aqi"] = 123.0
+    assert core.score_forecasts(d) >= 1
+    assert db.one("SELECT actual FROM forecast_log WHERE city = ? AND target = ?", (row["city"], row["target"]))["actual"] == 123
+    t = app.get("/api/track-record").json()
+    assert t["scored"] >= 1 and t["horizons"]
 
 
 def test_live_readings_start_the_forecast_today():
@@ -52,12 +186,13 @@ def test_live_readings_start_the_forecast_today():
     today = pd.Timestamp.today().normalize()
     daily = pd.DataFrame({"date": [today], "city": ["Pune"], "aqi": [float("nan")], "pm25": [float("nan")], "pm10": [float("nan")], "stations": [0.0]})
     readings = pd.DataFrame({"station": ["A", "B"], "aqi": [100.0, 120.0], "pm25": [40.0, 50.0], "pm10": [100.0, 120.0]})
-    d = web.with_live_day(daily, readings, st)
+    d = core.with_live_day(daily, readings, st)
     assert d.loc[0, "aqi"] == 110 and d.loc[0, "stations"] == 2
 
 
 def test_openaq_parsing(monkeypatch):
     hours = [{"value": v, "period": {"datetimeTo": {"local": f"2026-10-09T{h:02d}:00:00+05:30"}}} for h, v in enumerate([45.0] * 20 + [999.0])]
+
     def fake(url, params, headers=None):
         if url.endswith("/locations/1"):
             return {"results": [{"coordinates": {"latitude": 18.5, "longitude": 73.8},
@@ -90,18 +225,13 @@ def test_outbound_calls_are_throttled_and_cache_is_bounded(monkeypatch):
     assert list(live._cache) == [("k", 2), ("k", 3), ("k", 4)]
 
 
-def test_area_lookups_are_limited_per_visitor(monkeypatch):
-    monkeypatch.setattr(web, "_area_hits", {})
-    assert all(web.allow_area("1.2.3.4") for _ in range(web.AREA_PER_MINUTE))
-    assert not web.allow_area("1.2.3.4")
-    assert web.allow_area("5.6.7.8")  # other visitors are unaffected
-
-
-def test_area_limit_groups_ipv6_and_caps_memory(monkeypatch):
-    monkeypatch.setattr(web, "_area_hits", {})
-    assert all(web.allow_area(f"2001:db8::{i:x}") for i in range(web.AREA_PER_MINUTE))
-    assert not web.allow_area("2001:db8::ffff")  # same /64, same visitor
-    monkeypatch.setattr(web, "MAX_VISITORS", 5)
+def test_area_limit_per_visitor_groups_ipv6_and_caps_memory(monkeypatch):
+    monkeypatch.setattr(public, "_hits", {})
+    assert all(public.allow("1.2.3.4") for _ in range(public.AREA_PER_MINUTE))
+    assert not public.allow("1.2.3.4") and public.allow("5.6.7.8")
+    assert all(public.allow(f"2001:db8::{i:x}") for i in range(public.AREA_PER_MINUTE))
+    assert not public.allow("2001:db8::ffff")  # same /64, same visitor
+    monkeypatch.setattr(public, "MAX_VISITORS", 5)
     for i in range(20):
-        web.allow_area(f"10.0.0.{i}")
-    assert len(web._area_hits) == 5 and "10.0.0.19" in web._area_hits
+        public.allow(f"10.0.0.{i}")
+    assert len(public._hits) == 5 and "10.0.0.19" in public._hits

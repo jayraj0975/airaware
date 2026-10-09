@@ -1,67 +1,115 @@
 # AirAware
 
-A website that forecasts the Air Quality Index (AQI) for **Pune** and **Mumbai** up to a week ahead, from real
-government monitoring stations, live weather and the Copernicus CAMS particle forecast. Click any area on the map to
-see its estimated air quality, its forecast, the weather there right now and the nearest stations. Every forecast comes
-with an 80% range, the chance of a Poor day and health advice.
+**Know your air, a week ahead.** A full-stack platform that forecasts air quality for any street in **Pune** and
+**Mumbai** up to seven days ahead, from 37 government (CPCB) monitoring stations, live weather and the Copernicus CAMS
+particle forecast. People sign up to save their places, get advice tuned to their health and an alert before a bad
+day, and report pollution sources; admins moderate reports, manage users and watch the data pipeline.
 
-DS/ML mini project. Fits the suggested title *Weather Data Analysis and Prediction System*.
+DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as a portfolio product.
+
+| | |
+|---|---|
+| Next-day error | **10.4 AQI** vs 12.4 for "tomorrow = today" (16% better, Diebold-Mariano p < 0.001) |
+| Right AQI category | **83%** of days vs 77% |
+| 5 days ahead | 18.1 vs 25.3 (29% better) |
+| 80% forecast ranges | held the real AQI 85-88% of the time |
+
+## Features
+
+**For everyone**
+- **Today**: the forecast for today and tomorrow with an 80% range, the chance of a Poor day and health advice;
+  the cleanest day and hours ahead; weather now; six weeks of history joined to the week ahead.
+- **Any area**: click anywhere (or use your location) for that spot's estimated AQI, its forecast, the weather there
+  now, the nearest stations and pollution reported nearby.
+- **Compare**: up to four spots (home, office, school) side by side for the week.
+- **Insights**: the hour-by-month heatmap of when the air is cleanest, the Diwali effect, the year in air, weekdays,
+  the past year in cigarettes.
+- **Science**: the model against baselines, error by horizon, what the model relies on, and the method.
+- **Track record**: every forecast the site publishes is logged before its day and scored against the real AQI once
+  the stations report it.
+
+**With an account**
+- Saved places with their own forecasts, and **alerts** at a chosen AQI, raised once per day in the app (and by
+  email when SMTP is configured).
+- A **health profile** (asthma, heart disease, children, over 65, pregnancy, outdoor work): advice and warning levels
+  across the site adapt to it, warning sensitive groups one category earlier.
+- **Report pollution** (garbage burning, construction dust, factory smoke…) on the map; shown publicly once approved.
+- Change password (signs out other devices), delete the account and its data.
+
+**Admin console**
+- Overview: users, active users, places, alerts, warnings sent, reports waiting, forecasts logged and scored,
+  model error, data freshness per city, sign-ups over 30 days.
+- Users: search, promote or demote admins, disable accounts (ends their sessions).
+- Reports: moderation queue on a map, approve or reject.
+- Data & jobs: every startup, scheduled and manual rebuild with its result; **Rebuild data now**; the health of each
+  station (days reporting, agreement with its city).
+- Audit log: sign-ups, sign-ins, failed sign-ins, admin actions.
+
+## Architecture
+
+```
+ Browser ── React 19 + TypeScript (Vite) ─ Leaflet map, Chart.js
+    │ JSON over /api, session cookie
+ FastAPI (airaware/server) ─┬─ public.py   overview, stations, any area, model, insights, track record, reports
+                            ├─ account.py  sign-up/in, profile, places, alerts, notifications
+                            ├─ admin.py    overview, users, moderation, jobs, audit
+                            ├─ core.py     state, forecast log + scoring, alerts, background refresh
+                            └─ db.py       SQLite (WAL): users, sessions, places, alerts, notifications,
+                                           reports, forecast_log, jobs, audit
+ ML and data (airaware/) ── data.py (download + clean), model.py (walk-forward ridge models, conformal ranges,
+                            Diebold-Mariano), insights.py, live.py (weather, any-point estimates, OpenAQ)
+ Sources ── OpenAQ archive of CPCB stations · Open-Meteo (ERA5, forecast, CAMS) · OpenStreetMap
+```
+
+A background thread rebuilds the data and retrains every 6 hours (live readings hourly with an OpenAQ key), logs
+the new forecasts, scores old ones whose day has been measured, and raises alerts.
+
+**Security**
+- Passwords hashed with scrypt.
+- Sessions in HttpOnly SameSite cookies; only a hash of each token is stored. Sessions are cleared on logout,
+  password change and disable.
+- Every write needs an `X-AirAware` header, which blocks cross-site requests.
+- Limits: failed sign-ins (10 per 15 minutes per IP and per email); area lookups per visitor (30 a minute, IPv6 by
+  /64); outside services rate-capped.
+- Security headers (CSP, frame denial, nosniff).
+- Per-user ownership checks on every place, alert and notification. The container runs as a non-root user.
 
 ## Run it
 
-The website, on your own machine:
+**Docker** (one command, restarts on boot, data in a volume):
+
+```sh
+docker build -t airaware . && docker run -d --name airaware --restart unless-stopped -p 8000:8000 \
+  -v airaware-v2:/app/data -e AIRAWARE_ADMIN_EMAILS=you@example.com airaware
+# or: AIRAWARE_ADMIN_EMAILS=you@example.com docker compose up -d
+```
+
+Open http://localhost:8000 and sign up with the admin email to get the admin console. To promote an existing
+account: `docker exec -it airaware python -m airaware.server.manage make-admin you@example.com`.
+
+**Development:**
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn airaware.web:app --port 8000   # http://localhost:8000
+.venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
+cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
+.venv/bin/python -m pytest                                         # 22 tests
 ```
 
-Or with Docker, which keeps itself up to date and restarts on boot:
+| Setting | Default | |
+|---|---|---|
+| `AIRAWARE_ADMIN_EMAILS` | none | comma-separated emails that become admins on sign-up |
+| `OPENAQ_API_KEY` | none | live hourly CPCB readings (free key from explore.openaq.org) |
+| `AIRAWARE_SECURE_COOKIES` | 0 | set to 1 when served over HTTPS |
+| `AIRAWARE_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | none | email alerts |
+| `AIRAWARE_DB` | data/airaware.db | SQLite file |
+| `AIRAWARE_REBUILD_HOURS` | 6 | how often to download and retrain |
 
-```sh
-docker build -t airaware . && docker run -d --name airaware --restart unless-stopped -p 8000:8000 -v airaware-data:/app/data airaware
-# or: docker compose up -d   (needs the compose plugin)
-```
+API docs (OpenAPI): http://localhost:8000/api/docs.
 
-**Live station readings.** The public archive runs about four days behind. A free OpenAQ API key
-([explore.openaq.org](https://explore.openaq.org), two minutes to get) switches the site to live hourly CPCB readings, so
-"tomorrow" becomes a true next-day forecast: start it with `OPENAQ_API_KEY=... uvicorn ...` or `docker run -e OPENAQ_API_KEY=...`.
-
-Other commands:
-
-```sh
-.venv/bin/streamlit run app.py          # the analysis app with replay, what-if sliders and per-forecast explanations
-.venv/bin/python -m airaware.model      # re-run the evaluation, writes reports/metrics.md
-.venv/bin/python -m airaware.data       # refresh data/daily.csv and data/stations.csv (first run ~10 min, then ~2 min)
-.venv/bin/python -m pytest              # tests
-```
-
-## The website
-
-| Section | What it shows |
-|---|---|
-| Header | City switch, and whether station readings are live or from the archive. |
-| Today | AirAware's forecast for today with its range, chance of a Poor day and health advice; tomorrow; the cleanest day and hours ahead; the weather now. |
-| Pick any area | A map of every station coloured by its AQI. Click anywhere: the area's name, estimated AQI (inverse-distance weighting of stations within 12 km), its forecast for the coming days, the weather there now, and the nearest stations. |
-| Forecast and weather | The last six weeks and the week ahead with the 80% range; temperature, humidity and mixing height for the next 48 hours. |
-| Stations | Every station's latest reading and whether it agrees with the rest of the city. |
-| Insights | When in the day the air is cleanest, the Diwali effect, the year in air, the past year in cigarettes. |
-| How good is it? | AirAware against baselines with the significance test, error 1-7 days ahead, what the model relies on. |
-
-The site refreshes itself: archive readings, weather and CAMS every 6 hours (then the models retrain), and live readings
-every hour when a key is set. The API is plain JSON: `/api/status`, `/api/overview?city=`, `/api/stations?city=`,
-`/api/area?lat=&lon=`, `/api/model`, `/api/insights?city=`.
-
-## The analysis app (Streamlit)
-
-| Tab | What it shows |
-|---|---|
-| Right now | The latest measured day, then AirAware's forecast for today and tomorrow with an 80% range, the chance of a Poor-or-worse day and health advice. **Plan your week**: the cleanest day coming up, the usually cleanest hours that month, and the last measured day in cigarettes. A chart joins the last six weeks of readings to the week-ahead forecast. **Fetch latest data** in the sidebar downloads new readings and a fresh weather forecast. |
-| Replay a day | Pick any evening from October 2025 on: what AirAware said, its range, and what actually happened. Sliders change tomorrow's temperature, humidity, rain and wind. **Why this forecast?** splits the forecast exactly into the push from each input. |
-| Stations | Map of every CPCB station in the city coloured by its latest AQI, a table of their PM2.5 and PM10, and **Which stations can you trust?**: each station's correlation with and bias against the rest of the city over 90 days. |
-| Insights | Hour-by-month heatmap of when the air is cleanest, the Diwali effect, which particle sets the AQI each month, and a year of air in cigarettes. |
-| Explore the data | Daily AQI, the monthly pattern (clean monsoon, bad winter), share of days per AQI category, weather against AQI, data coverage per year. |
-| How good is it? | AirAware against baselines, a significance test, error 1-7 days ahead, range coverage, error by month, a category confusion table, which inputs matter, and a CSV of every test forecast. |
+Other tools: `.venv/bin/streamlit run app.py` (analysis app with replay, what-if sliders and per-forecast
+explanations), `python -m airaware.model` (re-run the evaluation into reports/metrics.md), `python -m airaware.data`
+(refresh the data).
 
 ## Data
 
@@ -180,25 +228,28 @@ What this shows:
 - The AQI is computed from PM only, not CPCB's official multi-pollutant AQI. The two agree on most days.
 - Without an OpenAQ key the archive runs about four days behind, so "tomorrow" is really a 5-day-ahead forecast from
   the last reading. The live path (OpenAQ API) is covered by tests with recorded responses but has not been run
-  against the real API without a key.
+  against the real API, for want of a key.
+- Email alerts are written and tested with a stub, but need an SMTP server configured to send.
 - An area's estimate interpolates between stations, so it cannot see a source between them (a busy junction,
   a construction site). Areas far from any station fall back to the nearest one.
 
 ## Project layout
 
 ```
-airaware/aqi.py      CPCB breakpoints, sub-index, categories, health advice
-airaware/data.py     download, cleaning, daily city table, station table, weather history + forecast
-airaware/model.py    features, baselines, walk-forward evaluation, ranges, significance test, explanations, live forecast
-airaware/insights.py daily rhythm, Diwali effect, dominant particle, station agreement, cigarette equivalent
-airaware/live.py     live weather, any-point estimates, place names, optional live OpenAQ readings
-airaware/web.py      FastAPI website: JSON API, background refresh, serves web/
-web/                 the dashboard (HTML, CSS, JavaScript with Leaflet and Chart.js)
-app.py               Streamlit analysis app
+airaware/aqi.py         CPCB breakpoints, categories, health advice, personal advice by health group
+airaware/data.py        download, cleaning, daily city table, station table, weather and CAMS
+airaware/model.py       features, baselines, walk-forward evaluation, ranges, significance test, live forecast
+airaware/insights.py    daily rhythm, Diwali effect, dominant particle, station agreement, cigarettes
+airaware/live.py        live weather, any-point estimates, place names, optional OpenAQ readings, throttling
+airaware/server/        FastAPI app: db, auth, public, account, admin, core (jobs), manage (CLI)
+frontend/src/           React app: pages (Home, Explore, Compare, Science, TrackRecord, About, Auth, Me, Admin)
+app.py                  Streamlit analysis app
+data/*.csv              cleaned daily, station and hourly tables (raw downloads cached in data/raw/)
+tests/                  model, cleaning, leakage, insights; server: auth, permissions, alerts, moderation, limits
 Dockerfile, compose.yaml  self-hosting
-data/daily.csv       the cleaned daily city table, including the week-ahead weather (raw downloads are cached in data/raw/)
-data/stations.csv    daily AQI per station with its position
-data/hourly_profile.csv  average PM by city, month and hour of day
-reports/metrics.md   latest evaluation
-tests/               API smoke test, live-reading handling, AQI maths, cleaning rules, no-leakage checks, training cutoff, explanations, ranges, DM test, insights
 ```
+
+## Roadmap
+
+Live CPCB readings by default, more cities (the pipeline is city-agnostic), push and WhatsApp alerts, and low-cost
+sensors from housing societies to fill the gaps between stations.

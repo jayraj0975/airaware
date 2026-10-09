@@ -1,4 +1,7 @@
 .venv/
 data/raw/
+data/airaware.db*
 __pycache__/
 .pytest_cache/
+frontend/node_modules/
+frontend/dist/

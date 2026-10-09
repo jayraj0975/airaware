@@ -49,3 +49,36 @@ ADVICE = {  # plain-language health advice per category, following the spirit of
     "Very Poor": "Everyone should limit time outdoors. Sensitive groups should stay indoors and keep activity light.",
     "Severe": "Avoid outdoor activity, keep windows shut, and get medical help for any breathing trouble.",
 }
+
+
+HEALTH_GROUPS = {  # what a user can tick in their profile
+    "asthma": "Asthma or other lung disease",
+    "heart": "Heart disease",
+    "child": "Young children",
+    "elderly": "Aged 65 or over",
+    "pregnant": "Pregnant",
+    "outdoor": "Works or exercises outdoors",
+}
+SENSITIVE = {"asthma", "heart", "child", "elderly", "pregnant"}
+
+
+# AQI up to which each kind of person is "ok", then "caution"; above the second number, "avoid".
+LEVELS = {"general": (200, 300), "outdoor": (100, 300), "sensitive": (100, 200)}
+
+
+def personal_advice(value: float, groups: list[str] | set[str] = ()) -> dict:
+    """Advice for one person: sensitive groups are warned one category earlier, outdoor workers get exposure tips.
+
+    Returns a level ("ok", "caution" or "avoid") for colour-coding and a sentence to show.
+    """
+    groups = set(groups)
+    who = "sensitive" if SENSITIVE & groups else "outdoor" if "outdoor" in groups else "general"
+    ok, caution = LEVELS[who]
+    level = "ok" if value <= ok else "caution" if value <= caution else "avoid"
+    name = category(value)[0]
+    text = ADVICE[name]
+    if who == "sensitive" and 100 < value <= 200:
+        text = "For you this is a day to take care: keep outdoor exercise short and light, and carry any inhaler or medicine you use."
+    if "outdoor" in groups and value > 100:
+        text += " Working or training outside: go early afternoon when the air is usually cleanest, and wear an N95 near traffic."
+    return {"level": level, "category": name, "text": text}

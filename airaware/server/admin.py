@@ -1,0 +1,139 @@
+"""Admin console API: platform overview, users, report moderation, data pipeline and jobs, audit trail."""
+
+import threading
+
+import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
+
+from airaware.data import STATIONS
+from airaware.insights import station_agreement
+from airaware.server import db
+from airaware.server.auth import client_ip, end_all_sessions, require_admin
+from airaware.server.core import _job_lock, rebuild, run_job
+from airaware.server.public import clean, records, state
+
+router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
+
+
+class UserChange(BaseModel):
+    role: str | None = None
+    disabled: bool | None = None
+
+
+class Moderation(BaseModel):
+    status: str
+
+
+@router.get("/overview")
+def overview(request: Request):
+    s = state(request)
+    counts = db.one("""SELECT (SELECT COUNT(*) FROM users) AS users,
+                              (SELECT COUNT(*) FROM users WHERE created_at >= date('now', '-7 days')) AS new_users,
+                              (SELECT COUNT(*) FROM users WHERE last_login >= date('now', '-7 days')) AS active_users,
+                              (SELECT COUNT(*) FROM places) AS places,
+                              (SELECT COUNT(*) FROM alerts WHERE active = 1) AS alerts,
+                              (SELECT COUNT(*) FROM notifications WHERE created_at >= date('now', '-7 days')) AS warnings_week,
+                              (SELECT COUNT(*) FROM reports WHERE status = 'pending') AS reports_pending,
+                              (SELECT COUNT(*) FROM reports) AS reports,
+                              (SELECT COUNT(*) FROM forecast_log) AS forecasts_logged,
+                              (SELECT COUNT(*) FROM forecast_log WHERE actual IS NOT NULL) AS forecasts_scored""")
+    signups = db.rows("""SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM users
+                         WHERE created_at >= date('now', '-30 days') GROUP BY day ORDER BY day""")
+    with s.lock:
+        d, stations, r = s.daily, s.stations, s.result
+        trained, live_at, live_n = s.trained_at, s.live_at, len(s.live)
+    measured = d.dropna(subset=["aqi"])
+    freshness = []
+    for city, g in measured.groupby("city"):
+        last = g["date"].max()
+        st = stations[(stations["city"] == city) & (stations["date"] > last - pd.Timedelta(days=7))]
+        freshness.append({"city": city, "last_measured": last.date().isoformat(),
+                          "days_behind": (pd.Timestamp.today().normalize() - last).days,
+                          "stations_reporting": st["station"].nunique(), "stations_total": len(set(STATIONS[city].values())),
+                          "weather_until": d[d["city"] == city].dropna(subset=["temp"])["date"].max().date().isoformat()})
+    both = r.table[r.table["City"] == "Both"].set_index("Method")["MAE"]
+    return clean({"counts": counts, "signups": signups, "freshness": freshness, "trained_at": trained,
+                  "live": {"at": live_at, "stations": live_n},
+                  "model": {"mae": both.get("AirAware: linear regression on the change"), "persistence_mae": both.get("Persistence (tomorrow = today)"),
+                            "dm_p": r.dm[1], "test_forecasts": len(r.test)},
+                  "job_running": _job_lock.locked()})
+
+
+@router.get("/users")
+def users(q: str = "", limit: int = Query(100, le=500)):
+    like = f"%{q.strip()}%"
+    return db.rows("""SELECT u.id, u.email, u.name, u.role, u.city, u.health, u.disabled, u.created_at, u.last_login,
+                             (SELECT COUNT(*) FROM places p WHERE p.user_id = u.id) AS places,
+                             (SELECT COUNT(*) FROM alerts a WHERE a.user_id = u.id) AS alerts,
+                             (SELECT COUNT(*) FROM reports r WHERE r.user_id = u.id) AS reports
+                      FROM users u WHERE u.email LIKE ? OR u.name LIKE ? ORDER BY u.id DESC LIMIT ?""", (like, like, limit))
+
+
+@router.patch("/users/{uid}")
+def change_user(uid: int, body: UserChange, request: Request, admin: dict = Depends(require_admin)):
+    u = db.one("SELECT * FROM users WHERE id = ?", (uid,))
+    if not u:
+        raise HTTPException(404, "No such user.")
+    if uid == admin["id"]:
+        raise HTTPException(422, "You cannot change your own role or disable yourself.")
+    if body.role is not None:
+        if body.role not in ("user", "admin"):
+            raise HTTPException(422, "role must be user or admin")
+        db.run("UPDATE users SET role = ? WHERE id = ?", (body.role, uid))
+        db.audit("admin.set_role", admin["id"], f"user {uid} ({u['email']}) -> {body.role}", client_ip(request))
+    if body.disabled is not None:
+        db.run("UPDATE users SET disabled = ? WHERE id = ?", (int(body.disabled), uid))
+        if body.disabled:
+            end_all_sessions(uid)
+        db.audit("admin.disable" if body.disabled else "admin.enable", admin["id"], f"user {uid} ({u['email']})", client_ip(request))
+    return {"ok": True}
+
+
+@router.get("/reports")
+def reports(status: str = "pending"):
+    return db.rows("""SELECT r.*, u.email AS author FROM reports r LEFT JOIN users u ON u.id = r.user_id
+                      WHERE r.status = ? ORDER BY r.id DESC LIMIT 200""", (status,))
+
+
+@router.patch("/reports/{rid}")
+def moderate(rid: int, body: Moderation, request: Request, admin: dict = Depends(require_admin)):
+    if body.status not in ("approved", "rejected", "pending"):
+        raise HTTPException(422, "status must be approved, rejected or pending")
+    if not db.run("UPDATE reports SET status = ?, moderated_by = ?, moderated_at = ? WHERE id = ?", (body.status, admin["id"], db.now(), rid)):
+        raise HTTPException(404, "No such report.")
+    db.audit(f"admin.report_{body.status}", admin["id"], f"report {rid}", client_ip(request))
+    return {"ok": True}
+
+
+@router.get("/stations")
+def stations(request: Request):
+    s = state(request)
+    with s.lock:
+        st = s.stations
+    trust = station_agreement(st)
+    last = st.sort_values("date").drop_duplicates("station", keep="last")[["station", "date", "aqi"]]
+    days = st[st["date"] > st["date"].max() - pd.Timedelta(days=30)].groupby("station").size().rename("days_30")
+    out = trust.merge(last, on="station", how="left").merge(days, on="station", how="left").fillna({"days_30": 0})
+    return records(out.assign(date=out["date"].astype(str).str[:10]).sort_values(["city", "correlation"]))
+
+
+@router.get("/jobs")
+def jobs():
+    return db.rows("SELECT * FROM jobs ORDER BY id DESC LIMIT 50")
+
+
+@router.post("/refresh", status_code=202)
+def refresh(request: Request, admin: dict = Depends(require_admin)):
+    """Starts a full rebuild (download, clean, retrain) in the background; one at a time."""
+    if _job_lock.locked():
+        raise HTTPException(409, "A job is already running.")
+    s = state(request)
+    threading.Thread(target=run_job, args=("manual rebuild", lambda: rebuild(s)), daemon=True).start()
+    db.audit("admin.refresh", admin["id"], "", client_ip(request))
+    return {"started": True}
+
+
+@router.get("/audit")
+def audit(limit: int = Query(200, le=1000)):
+    return db.rows("""SELECT a.*, u.email FROM audit a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT ?""", (limit,))
