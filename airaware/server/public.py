@@ -60,6 +60,19 @@ def forecast_rows(fc: pd.DataFrame, groups=()) -> list[dict]:
     return out
 
 
+def hour_shape(profile: pd.DataFrame, city: str, day: pd.Timestamp, daily_aqi: float) -> list[dict]:
+    """The day's forecast spread over its hours with the city's usual daily pattern for that month.
+
+    Each hour = daily forecast x (that hour's usual AQI / that month's usual daily mean). It is the typical shape of
+    a day, scaled to the forecast, not an hourly model.
+    """
+    p = profile[(profile["city"] == city) & (profile["month"] == day.month)].sort_values("hour")
+    if p.empty:
+        return []
+    scale = daily_aqi / p["aqi"].mean()
+    return [{"hour": int(h), "aqi": float(a * scale)} for h, a in zip(p["hour"], p["aqi"])]
+
+
 def check_city(city: str) -> str:
     if city not in CITIES:
         raise HTTPException(404, f"AirAware covers {', '.join(CITIES)}")
@@ -131,7 +144,9 @@ def overview(request: Request, city: str = "Pune", user: dict | None = Depends(c
         profile = s.profile
     ahead = upcoming(fc)
     best = ahead.loc[ahead["forecast"].idxmin()]
+    first = ahead.iloc[0]
     return clean({
+        "hours": hour_shape(profile, city, first["date"], first["forecast"]),
         "city": city,
         "measured": {"date": measured["date"].date().isoformat(), "aqi": measured["aqi"], "pm25": measured["pm25"], "pm10": measured["pm10"],
                      "stations": measured["stations"], "category": cat(measured["aqi"]),
@@ -176,6 +191,7 @@ def area(request: Request, lat: float = Query(ge=-90, le=90), lon: float = Query
         "measured": {**est, "category": cat(est["aqi"]), "offset": a["offset"]},
         "today": now, "forecast": rows,
         "best_hours": sorted(best_hours(profile, a["city"], date.today().month)["hour"].tolist()),
+        "hours": hour_shape(profile, a["city"], pd.Timestamp(now["date"]), now["forecast"]),
         "weather": weather(lat, lon), "reports": nearby,
     })
 

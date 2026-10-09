@@ -69,8 +69,9 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
 - Sessions in HttpOnly SameSite cookies; only a hash of each token is stored. Sessions are cleared on logout,
   password change and disable.
 - Every write needs an `X-AirAware` header, which blocks cross-site requests.
-- Limits: failed sign-ins (10 per 15 minutes per IP, IPv6 by /64, and per email, counted durably in the database);
-  area lookups per visitor (30 a minute); outside services rate-capped.
+- Limits, counted in the database with an atomic check-and-record so parallel requests cannot slip past: sign-in
+  attempts (10 per 15 minutes per email, 20 per IPv4 address or IPv6 /64), sign-ups (5 an hour per network). Area
+  lookups are limited per visitor (30 a minute) and calls to outside services are rate-capped.
 - Admins are made only from the server command line, never by signing up with a particular email.
 - Security headers (CSP, frame denial, nosniff).
 - Per-user ownership checks on every place, alert and notification. The container runs as a non-root user.
@@ -95,7 +96,7 @@ grants admin on sign-up because it does not verify email ownership):
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
 cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
-.venv/bin/python -m pytest                                         # 23 tests
+.venv/bin/python -m pytest                                         # 26 tests
 ```
 
 | Setting | Default | |

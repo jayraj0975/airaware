@@ -66,7 +66,7 @@ def signup(body: SignUp, request: Request, response: Response):
     if body.city not in CITIES:
         raise HTTPException(422, "Pick Pune or Mumbai.")
     ip = auth.visitor(client_ip(request))
-    if auth.recent_actions("user.signup", ip, minutes=60) >= SIGNUPS_PER_HOUR:
+    if not db.take("signup", ip, SIGNUPS_PER_HOUR, 60):
         raise HTTPException(429, "Too many new accounts from this network. Try again in an hour.")
     try:  # every sign-up is a plain user; admins are promoted from the server CLI (see auth.py)
         uid = db.run("INSERT INTO users (email, name, pw_hash, city, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -81,16 +81,16 @@ def signup(body: SignUp, request: Request, response: Response):
 @router.post("/auth/login")
 def login(body: SignIn, request: Request, response: Response):
     ip, email = auth.visitor(client_ip(request)), body.email.strip().lower()
-    if auth.login_blocked(ip, email):
-        raise HTTPException(429, "Too many failed sign-ins. Wait 15 minutes and try again.")
+    if not auth.allow_login(ip, email):
+        raise HTTPException(429, "Too many sign-in attempts. Wait 15 minutes and try again.")
     u = db.one("SELECT * FROM users WHERE email = ?", (email,))
     # Hash even when the email is unknown, so response time does not reveal which emails have accounts.
     ok = auth.verify_password(body.password, u["pw_hash"] if u else auth.hash_password("x"))
     if not u or not ok or u["disabled"]:
-        db.audit("user.login_failed", u["id"] if u else None, email, ip)  # login_blocked counts these
+        db.audit("user.login_failed", u["id"] if u else None, email, ip)
         raise HTTPException(401, "Wrong email or password." if not (u and ok) else "This account is disabled.")
     auth.start_session(response, u["id"], request)
-    db.audit("user.login", u["id"], email, ip)  # a success resets the per-email count
+    db.audit("user.login", u["id"], email, ip)
     return auth.public_user(u)
 
 

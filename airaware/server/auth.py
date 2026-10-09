@@ -5,7 +5,8 @@
   cannot be replayed as logins. Sessions last 30 days and are deleted on logout or password change.
 - Cross-site requests: every state-changing API call must carry the X-AirAware header (see app.py). Browsers do not
   let another site add custom headers without a CORS preflight, which this API never grants.
-- Brute force: at most 10 failed logins per 15 minutes per IP (per /64 for IPv6) and per email, counted durably.
+- Brute force: at most 10 sign-in attempts per 15 minutes per email and 20 per IP (per /64 for IPv6), counted in the
+  database with an atomic check-and-record, so parallel requests cannot slip past.
 - Admins are made only from the server's command line (manage.py), never by signing up with a particular email:
   the site does not verify email ownership, so an email list would let anyone claim admin.
 """
@@ -126,18 +127,9 @@ def visitor(host: str) -> str:
     return str(ipaddress.ip_network(f"{ip}/64", strict=False)) if ip.version == 6 else str(ip)
 
 
-def recent_actions(action: str, ip_key: str, minutes: int) -> int:
-    since = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds")
-    return db.one("SELECT COUNT(*) AS n FROM audit WHERE action = ? AND ip = ? AND at >= ?", (action, ip_key, since))["n"]
+def allow_login(ip_key: str, email: str) -> bool:
+    """At most LOGIN_LIMIT sign-in attempts per window against one email, and twice that from one visitor.
 
-
-def login_blocked(ip_key: str, email: str) -> bool:
-    """True after LOGIN_LIMIT failed sign-ins in the window from this visitor, or against this email since its last
-    successful sign-in. Failures are counted from the audit table, so they survive restarts and no flood of other
-    addresses can push them out of memory."""
-    since = (datetime.now(timezone.utc) - timedelta(minutes=LOGIN_WINDOW_MINUTES)).isoformat(timespec="seconds")
-    by_ip = recent_actions("user.login_failed", ip_key, LOGIN_WINDOW_MINUTES)
-    by_email = db.one("""SELECT COUNT(*) AS n FROM audit WHERE action = 'user.login_failed' AND detail = ? AND at >= ?
-                         AND at > COALESCE((SELECT MAX(at) FROM audit WHERE action = 'user.login' AND detail = ?), '')""",
-                      (email, since, email))["n"]
-    return by_ip >= LOGIN_LIMIT or by_email >= LOGIN_LIMIT
+    Atomic check-and-record (see db.take), so parallel requests cannot slip past the limit.
+    """
+    return db.take("login.ip", ip_key, LOGIN_LIMIT * 2, LOGIN_WINDOW_MINUTES) and db.take("login.email", email, LOGIN_LIMIT, LOGIN_WINDOW_MINUTES)

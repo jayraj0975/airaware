@@ -107,3 +107,20 @@ export function Bars({ labels, values, colours, yTitle }: { labels: string[]; va
     </div>
   )
 }
+
+export function HourBars({ hours, small = false }: { hours: { hour: number; aqi: number }[]; small?: boolean }) {
+  const now = new Date().getHours()
+  return (
+    <div className="chart" style={{ height: small ? 140 : 200 }}>
+      <Bar
+        data={{ labels: hours.map((h) => (h.hour % 3 === 0 ? `${h.hour % 12 || 12}${h.hour < 12 ? 'a' : 'p'}` : '')),
+          datasets: [{ data: hours.map((h) => h.aqi), backgroundColor: hours.map((h) => colourOf(h.aqi)),
+            borderColor: hours.map((h) => (h.hour === now ? '#0f172a' : 'transparent')), borderWidth: 2, borderRadius: 3 }] }}
+        options={{ plugins: { legend: { display: false }, tooltip: { callbacks: {
+            title: (i) => { const h = hours[i[0].dataIndex].hour; return `${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}${h === now ? ' (now)' : ''}` },
+            label: (i) => `About AQI ${Math.round(i.parsed.y ?? 0)}` } } },
+          scales: { x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0 } }, y: { beginAtZero: true, display: !small } } }}
+      />
+    </div>
+  )
+}

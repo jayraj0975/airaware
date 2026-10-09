@@ -24,6 +24,7 @@ export interface Overview {
     dominant: string; cigarettes: number; source: string }
   forecast: ForecastDay[]; history: { date: string; aqi: number }[]
   plan: { best_day: string; best_day_aqi: number; best_hours: number[] }
+  hours: { hour: number; aqi: number }[]
   weather: Weather | null
 }
 export interface Station {
@@ -35,7 +36,8 @@ export interface Area {
   lat: number; lon: number; city: string; place: string; source: string
   measured: { aqi: number; used: number; offset: number; category: Category
     nearest: { station: string; km: number; aqi: number; date: string }[] }
-  today: ForecastDay; forecast: ForecastDay[]; best_hours: number[]; weather: Weather | null; reports: Report[]
+  today: ForecastDay; forecast: ForecastDay[]; best_hours: number[]; hours: { hour: number; aqi: number }[]
+  weather: Weather | null; reports: Report[]
 }
 export interface User {
   id: number; email: string; name: string; role: 'user' | 'admin'; city: string; health: string[]

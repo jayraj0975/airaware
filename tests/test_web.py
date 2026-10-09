@@ -98,19 +98,23 @@ def test_password_is_hashed_and_session_token_not_stored(app):
     assert token and not db.one("SELECT 1 FROM sessions WHERE token_hash = ?", (token,))
 
 
-def test_login_lockout_is_durable_and_per_email(app, monkeypatch):
+def test_login_limit_per_email_whatever_the_address(app, monkeypatch):
     monkeypatch.setattr(auth, "LOGIN_LIMIT", 3)
     signup(client(app), "target@example.com", password="right-password")
     c = client(app)
     for _ in range(3):
         c.post("/api/auth/login", json={"email": "target@example.com", "password": "nope-nope"}, headers=H)
     r = c.post("/api/auth/login", json={"email": "target@example.com", "password": "right-password"}, headers=H)
-    assert r.status_code == 429  # even the right password waits out the lockout
-    # the email's count holds whatever addresses the attempts come from, and lives in the database, not memory
-    for i in range(3):
-        db.audit("user.login_failed", None, "spray@example.com", f"198.51.100.{i}")
-    assert auth.login_blocked("203.0.113.9", "spray@example.com")
-    assert not auth.login_blocked("203.0.113.9", "someone-else@example.com")
+    assert r.status_code == 429  # even the right password waits out the window
+    assert not auth.allow_login("198.51.100.7", "target@example.com")  # a new address does not reset the email's count
+    assert auth.allow_login("198.51.100.7", "someone-else@example.com")
+
+
+def test_take_is_atomic_under_parallel_requests():
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(16) as ex:
+        results = list(ex.map(lambda _: db.take("race", "k", 5, 60), range(40)))
+    assert sum(results) == 5
 
 
 def test_ipv6_visitors_are_grouped_by_64():
@@ -255,3 +259,9 @@ def test_area_limit_per_visitor_groups_ipv6_and_caps_memory(monkeypatch):
 def test_signups_are_limited_per_network(app, monkeypatch):
     monkeypatch.setattr(account, "SIGNUPS_PER_HOUR", 0)
     assert signup(client(app), "spammer@example.com").status_code == 429
+
+
+def test_hour_shape_keeps_the_daily_mean():
+    profile = pd.DataFrame({"city": "Pune", "month": 1, "hour": range(24), "aqi": [100.0] * 12 + [200.0] * 12})
+    h = public.hour_shape(profile, "Pune", pd.Timestamp("2026-01-05"), 90.0)
+    assert len(h) == 24 and abs(sum(x["aqi"] for x in h) / 24 - 90) < 1e-9 and h[0]["aqi"] == 60 and h[23]["aqi"] == 120

@@ -7,7 +7,7 @@ short-lived connection, which keeps the code thread-safe without a pool.
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT = Path(__file__).resolve().parents[2] / "data" / "airaware.db"
@@ -83,6 +83,10 @@ CREATE TABLE IF NOT EXISTS audit (
     at TEXT NOT NULL, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', ip TEXT
 );
+CREATE TABLE IF NOT EXISTS throttle (       -- attempts counted for rate limits (see take())
+    action TEXT NOT NULL, key TEXT NOT NULL, at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS throttle_key ON throttle(action, key, at);
 CREATE INDEX IF NOT EXISTS places_user ON places(user_id);
 CREATE INDEX IF NOT EXISTS alerts_user ON alerts(user_id);
 CREATE INDEX IF NOT EXISTS notes_user ON notifications(user_id, read);
@@ -135,6 +139,33 @@ def run(sql: str, args=()) -> int:
     with connect() as con:
         cur = con.execute(sql, args)
         return cur.lastrowid if sql.lstrip().upper().startswith("INSERT") else cur.rowcount
+
+
+def take(action: str, key: str, limit: int, minutes: int) -> bool:
+    """Records one attempt and returns True, or returns False if `limit` attempts were already made in the window.
+
+    The count and the insert run in one IMMEDIATE transaction, which takes SQLite's write lock first, so requests
+    arriving at the same moment are counted one after another and cannot all slip under the limit.
+    """
+    since = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+    con = sqlite3.connect(path(), timeout=10, isolation_level=None)
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        n = con.execute("SELECT COUNT(*) FROM throttle WHERE action = ? AND key = ? AND at >= ?", (action, key, since)).fetchone()[0]
+        if n >= limit:
+            con.execute("ROLLBACK")
+            return False
+        con.execute("INSERT INTO throttle (action, key, at) VALUES (?, ?, ?)", (action, key, now()))
+        if n == 0:  # a key's first attempt in a window is a cheap moment to drop expired rows
+            con.execute("DELETE FROM throttle WHERE at < ?", (since,))
+        con.execute("COMMIT")
+        return True
+    except BaseException:
+        if con.in_transaction:
+            con.execute("ROLLBACK")
+        raise
+    finally:
+        con.close()
 
 
 def audit(action: str, user_id: int | None = None, detail: str = "", ip: str | None = None) -> None:

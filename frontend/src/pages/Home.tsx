@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type Area, type Overview, type Report, type Station } from '../api'
 import AreaMap from '../components/AreaMap'
-import { ForecastChart, WeatherChart } from '../components/charts'
+import { ForecastChart, HourBars, WeatherChart } from '../components/charts'
 import { Advice, AqiHero, Card, DayStrip, Empty, ErrorBox, Pill, Spinner, useLoad } from '../components/ui'
 import { useSession } from '../session'
 import { compass, dayName, fmt, hourName, shortDate, upcoming, WEATHER } from '../util'
@@ -18,6 +18,13 @@ export default function Home() {
   return (
     <div className="page">
       {ov.error ? <ErrorBox error={ov.error} /> : !ov.data ? <div className="hero-grid"><div className="skeleton big" /><div className="skeleton" /><div className="skeleton" /></div> : <Hero o={ov.data} />}
+
+      {ov.data && ov.data.hours.length > 0 && (
+        <Card title={`${dayName(upcoming(ov.data.forecast)[0].date)}, hour by hour`}
+          hint={`The day's forecast spread over the usual daily pattern for ${city} in this month. Outlined bar: now. Cleanest waking hours: ${ov.data.plan.best_hours.map(hourName).join(', ')}.`}>
+          <HourBars hours={ov.data.hours} />
+        </Card>
+      )}
 
       <div className="map-row">
         <Card title="Pick any area" hint="Click anywhere, or use your location. Dots are CPCB stations; dashed orange dots are pollution reported by people.">
@@ -113,6 +120,7 @@ function AreaPanel({ picked, onReported }: { picked: { lat: number; lon: number 
         sub={<>Likely {fmt(a.today.lo)}–{fmt(a.today.hi)} · {Math.abs(a.measured.offset) < 1 ? 'about the same as' : `${fmt(Math.abs(a.measured.offset))} ${a.measured.offset > 0 ? 'above' : 'below'}`} the city average</>} />
       <DayStrip days={upcoming(a.forecast)} compact />
       <Advice p={a.today.personal} />
+      {a.hours.length > 0 && <HourBars hours={a.hours} small />}
       <p className="small">Cleanest hours this month: <b>{a.best_hours.map(hourName).join(', ')}</b></p>
       {a.weather && (
         <div className="wx">
