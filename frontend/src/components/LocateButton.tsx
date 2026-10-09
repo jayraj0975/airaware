@@ -13,24 +13,33 @@ export function locationProblem(code: number | 'insecure' | 'unsupported'): stri
   }
 }
 
-/** "Use my location": asks the browser once, with a time limit and a clear message for every way it can fail.
- * The position is used only to look up that spot; it is not stored unless the person saves the place. */
-export default function LocateButton({ onFound }: { onFound: (lat: number, lon: number) => void }) {
+/** "Use my location": asks the browser for a fresh, precise fix (GPS on phones), falls back to a quicker rough one,
+ * and passes on how accurate the answer is. The position is used only to look up that spot; it is not stored
+ * unless the person saves the place. */
+export default function LocateButton({ onFound }: { onFound: (lat: number, lon: number, accuracy: number) => void }) {
   const [busy, setBusy] = useState(false)
   const locate = () => {
     if (!window.isSecureContext) return toast(locationProblem('insecure'), 'error')
     if (!('geolocation' in navigator)) return toast(locationProblem('unsupported'), 'error')
     setBusy(true)
     // The browser's own timeout only starts once permission is granted, so an ignored or dismissed prompt would
-    // wait forever. This watchdog gives up after 20 s and says so; a late answer is then ignored.
+    // wait forever. This watchdog gives up after 25 s and says so; a late answer is then ignored.
     let settled = false
-    const finish = () => { const first = !settled; settled = true; setBusy(false); return first }
-    const watchdog = setTimeout(() => { if (finish()) toast(locationProblem(0), 'error') }, 20000)
-    navigator.geolocation.getCurrentPosition(
-      (p) => { clearTimeout(watchdog); if (finish()) onFound(p.coords.latitude, p.coords.longitude) },
-      (e) => { clearTimeout(watchdog); if (finish()) toast(locationProblem(e.code), 'error') },
-      { enableHighAccuracy: false, timeout: 15000, maximumAge: 5 * 60 * 1000 },
+    const finish = () => { const first = !settled; settled = true; setBusy(false); clearTimeout(watchdog); return first }
+    const watchdog = setTimeout(() => { if (finish()) toast(locationProblem(0), 'error') }, 25000)
+    const ask = (precise: boolean) => navigator.geolocation.getCurrentPosition(
+      (p) => {
+        if (!finish()) return
+        onFound(p.coords.latitude, p.coords.longitude, p.coords.accuracy)
+      },
+      (e) => {
+        if (settled) return
+        if (precise && e.code !== 1) return ask(false)   // no GPS fix in time: settle for the device's rough position
+        if (finish()) toast(locationProblem(e.code), 'error')
+      },
+      precise ? { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 } : { enableHighAccuracy: false, timeout: 10000, maximumAge: 10 * 60 * 1000 },
     )
+    ask(true)
   }
   return (
     <button type="button" className="ghost small locate-btn" onClick={locate} disabled={busy} aria-busy={busy}>

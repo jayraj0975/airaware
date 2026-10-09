@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, ApiError, type Area, type Overview, type Place, type Report, type Station } from '../api'
 import AreaMap from '../components/AreaMap'
@@ -25,8 +25,17 @@ export default function Home() {
   const [focus, setFocus] = useState<{ lat: number; lon: number; n: number } | null>(() => (fromUrl(params) ? { ...fromUrl(params)!, n: 0 } : null))
   const centre = status?.cities[city]
   // The picked spot lives in the address bar, so an area can be bookmarked or shared.
-  const setPicked = (p: { lat: number; lon: number }, fly = false) => {
+  // Bring the result into view (on a phone it sits below the map), or the tap looks like it did nothing; again once
+  // it has loaded, in case content arriving above it moved it away.
+  const reveal = useRef(false)
+  const showResult = () => requestAnimationFrame(() => document.getElementById('your-area')?.scrollIntoView({
+    behavior: 'smooth', block: window.matchMedia('(max-width: 900px)').matches ? 'start' : 'nearest' }))
+  // Metres either way, when the spot came from the device's location and the device was only guessing.
+  const [approx, setApprox] = useState<number | null>(null)
+  const setPicked = (p: { lat: number; lon: number }, fly = false, accuracy?: number) => {
     setPickedState(p)
+    setApprox(accuracy && accuracy > 1500 ? accuracy : null)
+    if (fly) { reveal.current = true; showResult() }
     if (fly) setFocus({ ...p, n: Date.now() })
     setParams({ lat: p.lat.toFixed(5), lon: p.lon.toFixed(5) }, { replace: true })
   }
@@ -47,17 +56,18 @@ export default function Home() {
         <Card title="Pick any area" hint="Type a neighbourhood, tap the map, or use your location. Coloured dots are government monitoring stations; dashed orange dots are pollution people have reported.">
           <div className="find-row">
             <SearchBox city={city} onPick={(lat, lon) => setPicked({ lat, lon }, true)} />
-            <LocateButton onFound={(lat, lon) => setPicked({ lat, lon }, true)} />
+            <LocateButton onFound={(lat, lon, accuracy) => setPicked({ lat, lon }, true, accuracy)} />
           </div>
           {centre && <AreaMap center={[centre.lat, centre.lon]} stations={st.data?.stations} reports={rp.data ?? []} picked={picked} focus={focus} onPick={(lat, lon) => setPicked({ lat, lon })} />}
           <Legend />
         </Card>
-        <AreaPanel picked={picked} onReported={rp.reload} onShowCity={(c) => {
+        <AreaPanel picked={picked} approx={approx} onReported={rp.reload} onShowCity={(c) => {
           // Show that city's own forecast at its centre, labelled as the city: never as the visitor's location.
           const centre = status?.cities[c]
           setCity(c)
           if (centre) setPicked({ lat: centre.lat, lon: centre.lon }, true)
         }} onLoaded={(a) => {
+          if (reveal.current) { reveal.current = false; showResult() }
           // A shared link or search result in the other city: switch city, then fly back to the spot.
           if (a.city !== city) { setCity(a.city); setFocus({ lat: a.lat, lon: a.lon, n: Date.now() }) }
         }} />
@@ -167,8 +177,13 @@ function Legend() {
   return <div className="legend">{status?.categories.map((c) => <span key={c.name}><i style={{ background: c.colour }} />{c.name}</span>)}<span><i className="dashed" />Reported source</span></div>
 }
 
-function AreaPanel({ picked, onReported, onLoaded, onShowCity }: {
-  picked: { lat: number; lon: number } | null; onReported: () => void; onLoaded: (a: Area) => void; onShowCity: (city: string) => void
+/** Laptops, and phones without a GPS fix, guess their position from Wi-Fi or the internet connection: say so. */
+const Approx = ({ m }: { m: number | null }) => m ? (
+  <p className="note">Your device only knows roughly where you are, to within about {m < 10000 ? (m / 1000).toFixed(1) : Math.round(m / 1000)} km, so this spot may not be yours. Tap your area on the map or search for it to correct it.</p>
+) : null
+
+function AreaPanel({ picked, approx, onReported, onLoaded, onShowCity }: {
+  picked: { lat: number; lon: number } | null; approx: number | null; onReported: () => void; onLoaded: (a: Area) => void; onShowCity: (city: string) => void
 }) {
   const { user, refresh } = useSession()
   const area = useLoad(() => (picked ? api.get<Area>(`/api/area?lat=${picked.lat}&lon=${picked.lon}`) : Promise.resolve(null)), [picked?.lat, picked?.lon])
@@ -176,7 +191,7 @@ function AreaPanel({ picked, onReported, onLoaded, onShowCity }: {
   useEffect(() => { if (area.data) onLoaded(area.data) }, [area.data])
   const [saving, setSaving] = useState(false)
   if (!picked) return (
-    <Card title="Your area" className="area">
+    <Card title="Your area" className="area" id="your-area">
       <p className="muted">Search for a neighbourhood, tap the map or use your location to see that spot's air today and for the week, the weather there, the nearest stations and anything people have reported nearby.</p>
       <ul className="features">
         <li><Icon name="pin" /> Any street in Pune or Mumbai</li>
@@ -185,18 +200,19 @@ function AreaPanel({ picked, onReported, onLoaded, onShowCity }: {
       </ul>
     </Card>
   )
-  if (area.loading) return <Card title="Your area" className="area"><Spinner label="Looking up this spot…" /></Card>
+  if (area.loading) return <Card title="Your area" className="area" id="your-area"><Spinner label="Looking up this spot…" /></Card>
   if (area.error instanceof ApiError && area.error.data.outside) {
     const nearest = String(area.error.data.nearest_city)
     return (
-      <Card title="Your area" className="area">
+      <Card title="Your area" className="area" id="your-area">
         <p>{area.error.message}</p>
+        <Approx m={approx} />
         <p className="small muted">We will not guess a forecast for a place we have no stations near. You can look at {nearest} instead.</p>
         <div className="actions"><button className="btn small" onClick={() => onShowCity(nearest)}>Show {nearest}'s forecast</button></div>
       </Card>
     )
   }
-  if (area.error || !area.data) return <Card title="Your area" className="area"><ErrorBox error={area.error ?? 'Nothing here'} /></Card>
+  if (area.error || !area.data) return <Card title="Your area" className="area" id="your-area"><ErrorBox error={area.error ?? 'Nothing here'} /></Card>
   const a = area.data
   const share = async () => {
     const url = location.href
@@ -206,9 +222,10 @@ function AreaPanel({ picked, onReported, onLoaded, onShowCity }: {
     } catch { /* the user closed the share sheet */ }
   }
   return (
-    <Card title="Your area" className="area">
+    <Card title="Your area" className="area" id="your-area">
       <h3 className="place-name">{a.place || `${a.lat.toFixed(3)}, ${a.lon.toFixed(3)}`}</h3>
       <div className="muted small">{a.city} · {a.lat.toFixed(4)}, {a.lon.toFixed(4)}</div>
+      <Approx m={approx} />
       <Reading size="medium" label={<>{dayName(a.today.date)} · forecast for this area</>} value={a.today.forecast} cat={a.today.category} lo={a.today.lo} hi={a.today.hi}>
         <p className="reading-note">Likely {fmt(a.today.lo)}–{fmt(a.today.hi)}, {Math.abs(a.measured.offset) < 1 ? 'about the same as' : `${fmt(Math.abs(a.measured.offset))} ${a.measured.offset > 0 ? 'above' : 'below'}`} the city average.</p>
       </Reading>

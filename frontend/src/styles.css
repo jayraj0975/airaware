@@ -229,6 +229,7 @@ tr.off td { opacity: .5; }
 .notes { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; max-height: 420px; overflow: auto; }
 .notes li { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; }
 .notes li.unread { border-left: 3px solid var(--accent); }
+.note { margin: 10px 0 0; padding: 9px 12px; font-size: .86rem; color: var(--ink-2); background: var(--soft); border-left: 3px solid #e0b411; border-radius: var(--radius-sm); }
 .notes p { margin: 4px 0; font-size: .88rem; color: var(--ink-2); } .notes small { color: var(--muted); }
 .health-consent { background: var(--accent-soft); border-radius: var(--radius-sm); padding: 10px 12px; }
 .privacy-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }

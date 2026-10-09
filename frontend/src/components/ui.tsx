@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom'
 import type { Category, ForecastDay, Personal } from '../api'
 import { AQI_BANDS, dayName, fmt } from '../util'
 
-export function Card({ title, hint, children, className = '', action }: { title?: ReactNode; hint?: ReactNode; children: ReactNode; className?: string; action?: ReactNode }) {
+export function Card({ title, hint, children, className = '', action, id }: { title?: ReactNode; hint?: ReactNode; children: ReactNode; className?: string; action?: ReactNode; id?: string }) {
   return (
-    <section className={`card ${className}`}>
+    <section className={`card ${className}`} id={id}>
       {(title || hint || action) && (
         <div className="card-head">
           <div>{title && <h2>{title}</h2>}{hint && <p className="hint">{hint}</p>}</div>

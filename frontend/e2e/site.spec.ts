@@ -83,6 +83,28 @@ test.describe('use my location', () => {
     await page.getByRole('button', { name: 'Use my location' }).click()
     await expect(page.getByText('forecast for this area')).toBeVisible({ timeout: 20_000 })
     await expect(page).toHaveURL(/lat=18\.5089/)
+    // On a phone the result is below the map: it must be brought into view, or the tap seems to do nothing.
+    await expect(page.locator('#your-area')).toBeInViewport()
+    await expect(page.getByText('only knows roughly')).toHaveCount(0)
+  })
+
+  test('rough position (no GPS, e.g. a laptop): shows the spot and says it may be off', async ({ page, context }) => {
+    await context.setGeolocation({ latitude: 18.5089, longitude: 73.8077, accuracy: 9000 })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Use my location' }).click()
+    await expect(page.getByText('forecast for this area')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText(/only knows roughly where you are, to within about 9\.0 km/)).toBeVisible()
+  })
+
+  test('no precise fix in time: falls back to the rough position', async ({ page }) => {
+    await page.goto('/')
+    await page.evaluate(() => {
+      navigator.geolocation.getCurrentPosition = (ok, err, opts) => opts?.enableHighAccuracy
+        ? err!({ code: 3 } as GeolocationPositionError)
+        : ok({ coords: { latitude: 18.5089, longitude: 73.8077, accuracy: 500 } } as GeolocationPosition)
+    })
+    await page.getByRole('button', { name: 'Use my location' }).click()
+    await expect(page.getByText('forecast for this area')).toBeVisible({ timeout: 20_000 })
   })
 
   test('outside the covered area: says how far and offers the nearest city', async ({ page, context }) => {

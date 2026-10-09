@@ -12,7 +12,7 @@ export default defineConfig({
     { name: 'phone', use: { ...devices['Pixel 7'] } },
   ],
   webServer: {
-    command: 'cd .. && python -m uvicorn airaware.server.app:app --port 8010',
+    command: 'rm -f /tmp/airaware-e2e.db* && cd .. && python -m uvicorn airaware.server.app:app --port 8010',
     url: 'http://127.0.0.1:8010/api/health',
     timeout: 180_000,
     reuseExistingServer: false,

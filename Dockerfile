@@ -8,6 +8,8 @@ RUN npm run build
 
 # 2. The API server, which also serves the built frontend
 FROM python:3.12-slim
+# Forecast days are Indian calendar days: on UTC the site called today "yesterday" until 5:30 am IST.
+ENV TZ=Asia/Kolkata
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
