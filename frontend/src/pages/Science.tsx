@@ -59,8 +59,8 @@ export default function Science() {
         </Card>
         <Card title="Further ahead" hint="Average error by days ahead">
           <LineChart labels={hz(m.airaware).map((h) => `${h.h} day${h.h > 1 ? 's' : ''}`)} yTitle="Average error (AQI points)"
-            series={[{ label: 'AirAware', data: hz(m.airaware).map((h) => h.MAE), colour: '#2563eb' },
-              { label: 'Last reading repeated', data: hz(m.persistence).map((h) => h.MAE), colour: '#94a3b8', dash: true }]} />
+            series={[{ label: 'AirAware', data: hz(m.airaware).map((h) => h.MAE), colour: '#0f6b5c' },
+              { label: 'Last reading repeated', data: hz(m.persistence).map((h) => h.MAE), colour: '#9aa0a6', dash: true }]} />
           <p className="small">The gap widens with the horizon: the further ahead, the more the weather and CAMS forecasts matter.</p>
         </Card>
         <Card title="What the model relies on" hint="Extra error when each input is shuffled so the model cannot use it">

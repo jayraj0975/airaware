@@ -13,13 +13,13 @@ BREAKPOINTS = {
 }
 INDEX = [0, 50, 100, 200, 300, 400, 500]
 
-CATEGORIES = [  # upper bound, name, colour used by CPCB
-    (50, "Good", "#00b050"),
-    (100, "Satisfactory", "#92d050"),
-    (200, "Moderate", "#ffff00"),
-    (300, "Poor", "#ff9900"),
-    (400, "Very Poor", "#ff0000"),
-    (math.inf, "Severe", "#c00000"),
+CATEGORIES = [  # upper bound, name, colour: CPCB's hues, softened so text and maps stay readable on screen
+    (50, "Good", "#2f9e5b"),
+    (100, "Satisfactory", "#8cb83a"),
+    (200, "Moderate", "#e0b411"),
+    (300, "Poor", "#e57a2b"),
+    (400, "Very Poor", "#cf4130"),
+    (math.inf, "Severe", "#8e1f2f"),
 ]
 
 

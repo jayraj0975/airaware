@@ -5,7 +5,7 @@ import AreaMap from '../components/AreaMap'
 import LocateButton from '../components/LocateButton'
 import SearchBox from '../components/SearchBox'
 import { ForecastChart, HourBars, WeatherChart } from '../components/charts'
-import { Advice, AqiHero, AskDialog, Card, DayStrip, Dialog, Empty, ErrorBox, Pill, Spinner, toast, useLoad, useTitle } from '../components/ui'
+import { Advice, AskDialog, Card, DayStrip, Dialog, Empty, ErrorBox, Icon, Pill, Reading, Spinner, toast, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { compass, dayName, fmt, hourName, shortDate, upcoming, WEATHER } from '../util'
 
@@ -33,7 +33,7 @@ export default function Home() {
 
   return (
     <div className="page">
-      {ov.error ? <ErrorBox error={ov.error} /> : !ov.data ? <div className="hero-grid"><div className="skeleton big" /><div className="skeleton" /><div className="skeleton" /></div> : <Hero o={ov.data} />}
+      {ov.error ? <ErrorBox error={ov.error} /> : !ov.data ? <div className="skeleton hero-skeleton" aria-label="Loading today's forecast" /> : <Hero o={ov.data} />}
       <MyPlaces onOpen={(p) => setPicked(p, true)} />
 
       {ov.data && ov.data.hours.length > 0 && (
@@ -65,7 +65,7 @@ export default function Home() {
 
       {ov.data && (
         <div className="grid two">
-          <Card title="The last six weeks and the week ahead" hint={`Blue is what the stations measured, up to ${shortDate(ov.data.measured.date)}. Orange is our forecast; the shaded band is where the real value lands 4 times in 5.`}>
+          <Card title="The last six weeks and the week ahead" hint={`The dark line is what the stations measured, up to ${shortDate(ov.data.measured.date)}. The dotted green line is our forecast; the shaded band is where the real value lands 4 times in 5.`}>
             <ForecastChart history={ov.data.history} forecast={ov.data.forecast} />
             <DayStrip days={upcoming(ov.data.forecast)} />
           </Card>
@@ -88,35 +88,32 @@ function Hero({ o }: { o: Overview }) {
   const [explaining, setExplaining] = useState(false)
   const days = upcoming(o.forecast)
   const today = days[0]
-  const tomorrow = days[1]
   const w = o.weather?.current
   return (
-    <div className="hero-grid">
-      <AqiHero label={<>{o.city} · {dayName(today.date)} · AirAware forecast</>} value={today.forecast} cat={today.category}
-        sub={<>Likely between {fmt(today.lo)} and {fmt(today.hi)} · chance of a Poor day {Math.round(today.p_poor * 100)}% · from station readings up to {shortDate(today.made_from)}</>}>
+    <section className="hero">
+      <div className="hero-main">
+        <Reading label={<>{o.city} · {dayName(today.date).toLowerCase() === 'today' ? 'today' : dayName(today.date)}</>}
+          value={today.forecast} cat={today.category} lo={today.lo} hi={today.hi}>
+          <p className="reading-note">
+            Likely between {fmt(today.lo)} and {fmt(today.hi)}. Chance of a Poor day: {Math.round(today.p_poor * 100)}%.
+            {' '}<button className="text-btn" onClick={() => setExplaining(true)}>What do these numbers mean?</button>
+          </p>
+        </Reading>
         <Advice p={today.personal} />
-        <button className="explain" onClick={() => setExplaining(true)}>What do these numbers mean?</button>
+        {!user && <p className="small muted"><Link to="/signup">Create a free account</Link> for advice tuned to your health and alerts for the places you care about.</p>}
         {explaining && <AqiGuide onClose={() => setExplaining(false)} />}
-        {!user && <div className="hint-on-colour"><Link to="/signup">Create a free account</Link> for advice tuned to your health and alerts for your places.</div>}
-      </AqiHero>
-      <div className="card stack">
-        <span className="muted small">Tomorrow</span>
-        {tomorrow ? <div className="mid"><span className="swatch" style={{ background: tomorrow.category.colour }} /><b>{fmt(tomorrow.forecast)}</b> <Pill cat={tomorrow.category} /></div> : <div>–</div>}
-        {tomorrow && <span className="small">Likely {fmt(tomorrow.lo)}–{fmt(tomorrow.hi)}</span>}
-        <div className="row"><span>Cleanest day ahead</span><b>{dayName(o.plan.best_day)} ({fmt(o.plan.best_day_aqi)})</b></div>
-        <div className="row"><span>Cleanest hours</span><b>{o.plan.best_hours.map(hourName).join(', ')}</b></div>
-        <div className="row"><span>Last measured {shortDate(o.measured.date)}</span><b>{fmt(o.measured.aqi)} <Pill cat={o.measured.category} /></b></div>
-        <div className="row"><span>Main pollutant then</span><b>{o.measured.dominant}</b></div>
       </div>
-      <div className="card stack">
-        <span className="muted small">Weather now{w ? ` · ${new Date(w.time).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}` : ''}</span>
-        <div className="mid"><b>{w ? `${fmt(w.temperature_2m)}°C` : '–'}</b></div>
-        <span className="small">{w ? `${WEATHER[w.weather_code] ?? ''} · feels like ${fmt(w.apparent_temperature)}°C` : 'Weather unavailable'}</span>
-        <div className="row"><span>Humidity</span><b>{w ? `${fmt(w.relative_humidity_2m)}%` : '–'}</b></div>
-        <div className="row"><span>Wind</span><b>{w ? `${fmt(w.wind_speed_10m)} km/h from ${compass(w.wind_direction_10m)}` : '–'}</b></div>
-        <div className="row"><span>Breathing the last measured day</span><b>≈ {fmt(o.measured.cigarettes, 1)} cigarettes</b></div>
+      <div className="hero-side">
+        <h3 className="eyebrow">Coming days</h3>
+        <DayStrip days={days.slice(1)} />
+        <dl className="facts">
+          <div><dt>Best time outside</dt><dd>{o.plan.best_hours.map(hourName).join(', ')}</dd></div>
+          <div><dt>Cleanest day ahead</dt><dd>{dayName(o.plan.best_day)} · {fmt(o.plan.best_day_aqi)}</dd></div>
+          <div><dt>Last measured, {shortDate(o.measured.date)}</dt><dd>{fmt(o.measured.aqi)} · mostly {o.measured.dominant}</dd></div>
+          <div><dt>Weather now</dt><dd>{w ? `${fmt(w.temperature_2m)}°C, ${(WEATHER[w.weather_code] ?? '').toLowerCase()}, wind ${fmt(w.wind_speed_10m)} km/h ${compass(w.wind_direction_10m)}` : 'unavailable'}</dd></div>
+        </dl>
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -130,7 +127,7 @@ function AqiGuide({ onClose }: { onClose: () => void }) {
         {status?.categories.map((c) => {
           const range = c.upper == null ? `${lower + 1}+` : `${lower === 0 ? 0 : lower + 1}–${c.upper}`
           lower = c.upper ?? lower
-          return <li key={c.name}><span className="band" style={{ background: c.colour }}>{range}</span><div><b>{c.name}</b><p>{c.advice}</p></div></li>
+          return <li key={c.name}><span className="band"><i style={{ background: c.colour }} />{range}</span><div><b>{c.name}</b><p>{c.advice}</p></div></li>
         })}
       </ul>
       <p className="small muted">Our numbers are forecasts and estimates, not the official reading. <a href="/science">How we make them</a>.</p>
@@ -155,7 +152,7 @@ function MyPlaces({ onOpen }: { onOpen: (p: { lat: number; lon: number }) => voi
         const t = upcoming(p.forecast)[0]
         return (
           <button key={p.id} className="my-place" onClick={() => { onOpen(p); document.querySelector('.map-row')?.scrollIntoView({ behavior: 'smooth' }) }}>
-            <span className="swatch" style={{ background: t?.category.colour ?? '#ccc' }} />
+            <i className="dot" style={{ background: t?.category.colour ?? '#ccc' }} />
             <span><b>{p.name}</b><small>{t ? `${fmt(t.forecast)} · ${t.category.name}` : 'No forecast'}</small></span>
           </button>
         )
@@ -180,8 +177,12 @@ function AreaPanel({ picked, onReported, onLoaded, onShowCity }: {
   const [saving, setSaving] = useState(false)
   if (!picked) return (
     <Card title="Your area" className="area">
-      <p className="muted">Click a spot on the map to see its estimated air quality, its forecast for the coming days, the weather there right now, nearby stations and anything people have reported.</p>
-      <ul className="features"><li>📍 Any street in Pune or Mumbai</li><li>📅 Forecast up to a week ahead</li><li>🔔 <Link to="/signup">Save places and get alerts</Link></li></ul>
+      <p className="muted">Search for a neighbourhood, tap the map or use your location to see that spot's air today and for the week, the weather there, the nearest stations and anything people have reported nearby.</p>
+      <ul className="features">
+        <li><Icon name="pin" /> Any street in Pune or Mumbai</li>
+        <li><Icon name="calendar" /> Up to a week ahead</li>
+        <li><Icon name="bell" /> <Link to="/signup">Save places and get alerts</Link></li>
+      </ul>
     </Card>
   )
   if (area.loading) return <Card title="Your area" className="area"><Spinner label="Looking up this spot…" /></Card>
@@ -206,11 +207,12 @@ function AreaPanel({ picked, onReported, onLoaded, onShowCity }: {
   }
   return (
     <Card title="Your area" className="area">
-      <h3>{a.place || `${a.lat.toFixed(3)}, ${a.lon.toFixed(3)}`}</h3>
+      <h3 className="place-name">{a.place || `${a.lat.toFixed(3)}, ${a.lon.toFixed(3)}`}</h3>
       <div className="muted small">{a.city} · {a.lat.toFixed(4)}, {a.lon.toFixed(4)}</div>
-      <AqiHero label={<>{dayName(a.today.date)} · forecast for this area</>} value={a.today.forecast} cat={a.today.category}
-        sub={<>Likely {fmt(a.today.lo)}–{fmt(a.today.hi)} · {Math.abs(a.measured.offset) < 1 ? 'about the same as' : `${fmt(Math.abs(a.measured.offset))} ${a.measured.offset > 0 ? 'above' : 'below'}`} the city average</>} />
-      <DayStrip days={upcoming(a.forecast)} compact />
+      <Reading size="medium" label={<>{dayName(a.today.date)} · forecast for this area</>} value={a.today.forecast} cat={a.today.category} lo={a.today.lo} hi={a.today.hi}>
+        <p className="reading-note">Likely {fmt(a.today.lo)}–{fmt(a.today.hi)}, {Math.abs(a.measured.offset) < 1 ? 'about the same as' : `${fmt(Math.abs(a.measured.offset))} ${a.measured.offset > 0 ? 'above' : 'below'}`} the city average.</p>
+      </Reading>
+      <DayStrip days={upcoming(a.forecast).slice(1)} />
       <Advice p={a.today.personal} />
       {a.hours.length > 0 && <HourBars hours={a.hours} small />}
       <p className="small">Cleanest hours this month: <b>{a.best_hours.map(hourName).join(', ')}</b></p>
@@ -223,14 +225,14 @@ function AreaPanel({ picked, onReported, onLoaded, onShowCity }: {
       )}
       <p className="small muted">Last measured here (from {a.measured.used} station{a.measured.used > 1 ? 's' : ''} within 12 km): <b>{fmt(a.measured.aqi)}</b>, {a.measured.category.name}</p>
       <ul className="near">{a.measured.nearest.map((n) => <li key={n.station}>{n.station}: <b>{fmt(n.aqi)}</b> · {n.km} km</li>)}</ul>
-      {a.reports.length > 0 && <p className="small warn">⚠ {a.reports.length} pollution report{a.reports.length > 1 ? 's' : ''} within 3 km this week: {[...new Set(a.reports.map((r) => r.label.toLowerCase()))].join(', ')}.</p>}
+      {a.reports.length > 0 && <p className="small warn">{a.reports.length} pollution report{a.reports.length > 1 ? 's' : ''} within 3 km this week: {[...new Set(a.reports.map((r) => r.label.toLowerCase()))].join(', ')}.</p>}
       {user ? (
         <div className="actions">
-          <button className="btn small" onClick={() => setSaving(true)}>★ Save this place</button>
-          <button className="ghost small" onClick={share}>↗ Share</button>
+          <button className="btn small" onClick={() => setSaving(true)}><Icon name="star" /> Save this place</button>
+          <button className="ghost small" onClick={share}><Icon name="share" /> Share</button>
           <ReportButton lat={a.lat} lon={a.lon} onDone={(m, ok) => { toast(m, ok ? 'ok' : 'error'); if (ok) onReported() }} />
         </div>
-      ) : <div className="actions"><button className="ghost small" onClick={share}>↗ Share this area</button><span className="small"><Link to="/signup">Sign up</Link> to save it, get alerts and report pollution.</span></div>}
+      ) : <div className="actions"><button className="ghost small" onClick={share}><Icon name="share" /> Share this area</button><span className="small"><Link to="/signup">Sign up</Link> to save it, get alerts and report pollution.</span></div>}
       {saving && <AskDialog title="Save this place" label="Name" initial={a.place.split(',')[0] || 'My place'} ok="Save"
         note="Give it a name you will recognise, like Home, Office or School. You can set an alert for it on your dashboard."
         onClose={() => setSaving(false)}
@@ -250,7 +252,7 @@ function ReportButton({ lat, lon, onDone }: { lat: number; lon: number; onDone: 
   const [kind, setKind] = useState('burning')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
-  if (!open) return <button className="ghost small" onClick={() => setOpen(true)}>⚑ Report pollution here</button>
+  if (!open) return <button className="ghost small" onClick={() => setOpen(true)}><Icon name="flag" /> Report pollution</button>
   const send = async () => {
     setBusy(true)
     try { await api.post('/api/reports', { lat, lon, kind, note }); onDone('Thanks! Your report will show on the map once a moderator approves it.', true); setOpen(false); setNote('') }

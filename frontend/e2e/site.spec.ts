@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('home shows the forecast and any area on the map', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByText('AirAware forecast')).toBeVisible()
+  await expect(page.locator('.hero .reading-num')).toHaveText(/^\d+$/)
   await expect(page.getByText('hour by hour')).toBeVisible()
   await page.locator('.leaflet-container').first().click({ position: { x: 200, y: 200 } })
   await expect(page.getByText('forecast for this area')).toBeVisible({ timeout: 20_000 })

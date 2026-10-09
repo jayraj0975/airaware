@@ -46,7 +46,7 @@ export default function Explore() {
         </Card>
         <Card title="How much does Diwali add?" hint={data.diwali.years.length ? `Diwalis with data: ${data.diwali.years.join(', ')}` : 'No Diwali with data yet'}>
           <LineChart labels={data.diwali.curve.map((c) => c.offset)} xTitle="Days from Diwali" yTitle="AQI above the weeks before"
-            series={[{ label: 'Change', data: data.diwali.curve.map((c) => c.change), colour: '#f59e0b', fill: true }]} />
+            series={[{ label: 'Change', data: data.diwali.curve.map((c) => c.change), colour: '#c2541c', fill: true }]} />
           {peak.change > -Infinity && <p className="small">Peak <b>+{fmt(peak.change)} AQI</b>, {peak.offset === 0 ? 'on Diwali itself' : `${Math.abs(peak.offset)} day${Math.abs(peak.offset) > 1 ? 's' : ''} ${peak.offset < 0 ? 'before' : 'after'} Diwali`}. Each day's AQI minus the average of days 30 to 11 before. Part of the rise is the normal post-monsoon worsening, so this is an upper bound on the festival's own effect.</p>}
         </Card>
         <Card title="The year in air" hint="Bars: average AQI by month. Line: share of days fine PM2.5 (smoke) rather than coarse PM10 (dust) set the AQI.">

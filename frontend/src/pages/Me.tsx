@@ -3,9 +3,9 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, type Note, type Place } from '../api'
 import AreaMap from '../components/AreaMap'
-import { Advice, AskDialog, Card, ConfirmDialog, DayStrip, Dialog, Empty, ErrorBox, Pill, Spinner, toast, useLoad, useTitle } from '../components/ui'
+import { Advice, AskDialog, Card, ConfirmDialog, DayStrip, Dialog, Empty, ErrorBox, Icon, Reading, Spinner, toast, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
-import { dateTime, fmt, upcoming } from '../util'
+import { dateTime, upcoming } from '../util'
 
 interface MyReport { id: number; kind: string; note: string; status: string; created_at: string; city: string }
 
@@ -87,14 +87,14 @@ function PlaceCard({ p, onChange }: { p: Place; onChange: () => void }) {
       {removing && <ConfirmDialog title={`Remove ${p.name}?`} ok="Remove" onClose={() => setRemoving(false)}
         onConfirm={() => run(() => api.del(`/api/me/places/${p.id}`), `${p.name} removed.`)}>Its alerts are deleted too.</ConfirmDialog>}
       {today ? <>
-        <div className="mid"><span className="swatch" style={{ background: today.category.colour }} /><b>{fmt(today.forecast)}</b> <Pill cat={today.category} /> <span className="small muted">today · likely {fmt(today.lo)}–{fmt(today.hi)}</span></div>
-        <DayStrip days={days} compact />
+        <Reading size="medium" label="Today" value={today.forecast} cat={today.category} lo={today.lo} hi={today.hi} />
+        <DayStrip days={days.slice(1)} />
         <Advice p={today.personal} />
       </> : <Empty>No forecast for this spot.</Empty>}
       <div className="alerts">
         {p.alerts?.map((a) => (
           <div key={a.id} className={`alert-row ${a.active ? '' : 'off'}`}>
-            🔔 Warn me at AQI <b>{a.threshold}</b> or higher {a.last_sent && <small className="muted">(last warned for {a.last_sent})</small>}
+            <Icon name="bell" size={14} /> Warn me at AQI <b>{a.threshold}</b> or higher {a.last_sent && <small className="muted">(last warned for {a.last_sent})</small>}
             <button className="link" onClick={() => toggle(a.id, a.active)}>{a.active ? 'Pause' : 'Resume'}</button>
             <button className="link danger" onClick={() => dropAlert(a.id)}>Delete</button>
           </div>
@@ -222,7 +222,7 @@ function PrivacyCard() {
     <Card title={<span id="privacy">Your data and privacy</span>} hint="Your rights under India's DPDP Act, one click away">
       <div className="privacy-actions">
         <div><b>See everything we hold</b><p className="small muted">A file with your profile, places, alerts, notifications, reports, sign-in sessions and activity log.</p>
-          <button className="ghost small" onClick={download}>⤓ Download my data</button></div>
+          <button className="ghost small" onClick={download}><Icon name="download" size={14} /> Download my data</button></div>
         <div><b>Health information</b><p className="small muted">{user!.health_consent ? `You consented to using your health groups to tailor advice.` : 'You have not shared any health information.'}</p>
           {user!.health_consent && <button className="ghost small" onClick={() => setWithdrawing(true)}>Withdraw consent and erase it</button>}</div>
         <div><b>Questions or complaints</b><p className="small muted">Ask for a correction, raise a grievance or nominate someone to act for you.</p>
@@ -258,7 +258,7 @@ function TwoStep() {
   }, [setup])
   if (user!.two_step) return (
     <div className="two-step on">
-      <b>✓ Two-step sign-in is on</b>
+      <b><Icon name="check" size={15} /> Two-step sign-in is on</b>
       <p className="small muted">Signing in needs your password and a code from your authenticator app.</p>
       <button type="button" className="link danger" onClick={() => setTurningOff(true)}>Turn it off</button>
       {turningOff && <TurnOff onClose={() => setTurningOff(false)} />}

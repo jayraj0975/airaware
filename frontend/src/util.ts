@@ -36,11 +36,13 @@ export const upcoming = <T extends { date: string }>(list: T[]): T[] => {
   return u.length ? u : list.slice(-1)
 }
 
-const CATS: [number, string][] = [[50, '#00b050'], [100, '#92d050'], [200, '#ffff00'], [300, '#ff9900'], [400, '#ff0000'], [Infinity, '#c00000']]
+// Same softened CPCB colours as the server (airaware/aqi.py).
+const CATS: [number, string][] = [[50, '#2f9e5b'], [100, '#8cb83a'], [200, '#e0b411'], [300, '#e57a2b'], [400, '#cf4130'], [Infinity, '#8e1f2f']]
+export const AQI_BANDS: { upto: number; colour: string }[] = CATS.map(([upto, colour]) => ({ upto: Math.min(upto, 500), colour }))
 export const colourOf = (aqi: number) => CATS.find(([u]) => aqi <= u)![1]
 
-/** Smooth green-to-red scale: AQI 40 is green, 120 yellow, 200 orange, 280 and above red. */
+/** Calm sequential scale for the heatmap: pale sage for clean hours to deep rust for the worst. */
 export function heat(aqi: number): string {
-  const t = Math.max(0, Math.min(1, (aqi - 40) / 240))
-  return `hsl(${130 - 130 * t} ${65 + 25 * t}% ${45 + 5 * Math.sin(Math.PI * t)}%)`
+  const t = Math.max(0, Math.min(1, (aqi - 30) / 220))
+  return `hsl(${145 - 125 * t} ${30 + 35 * t}% ${88 - 46 * t}%)`
 }

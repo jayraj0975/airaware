@@ -7,7 +7,7 @@ import { Card, Empty, Pill, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { dayName, fmt, upcoming } from '../util'
 
-const COLOURS = ['#2563eb', '#db2777', '#059669', '#d97706']
+const COLOURS = ['#0f6b5c', '#8a4fa3', '#c2541c', '#2b6cb0']
 type Spot = { id: number; lat: number; lon: number; label?: string; area?: Area; error?: string }
 let nextId = 1
 

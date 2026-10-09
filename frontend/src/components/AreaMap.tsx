@@ -37,22 +37,22 @@ export default function AreaMap({ center, zoom = 11, stations = [], reports = []
         <FlyTo to={focus} />
         <Clicks onPick={onPick} />
         {stations.map((s) => (
-          <CircleMarker key={s.station} center={[s.lat, s.lon]} radius={11} pathOptions={{ color: '#0f172a', weight: 1, fillColor: s.category.colour, fillOpacity: 0.9 }}
+          <CircleMarker key={s.station} center={[s.lat, s.lon]} radius={9} pathOptions={{ color: '#ffffff', weight: 1.5, fillColor: s.category.colour, fillOpacity: 0.95 }}
             eventHandlers={{ click: (e) => { e.originalEvent.stopPropagation(); onPick?.(s.lat, s.lon) } }}>
             <Tooltip><b>{s.station}</b><br />AQI {fmt(s.aqi)} · {s.category.name}<br />{s.date}</Tooltip>
           </CircleMarker>
         ))}
         {reports.map((r) => (
-          <CircleMarker key={`r${r.id}`} center={[r.lat, r.lon]} radius={7} pathOptions={{ color: '#7c2d12', weight: 2, dashArray: '3 3', fillColor: '#fb923c', fillOpacity: 0.85 }}>
+          <CircleMarker key={`r${r.id}`} center={[r.lat, r.lon]} radius={7} pathOptions={{ color: '#a8630c', weight: 1.5, dashArray: '3 3', fillColor: '#f3d9b5', fillOpacity: 0.9 }}>
             <Tooltip><b>Reported: {r.label}</b>{r.note && <><br />{r.note}</>}<br />{dateTime(r.created_at)}</Tooltip>
           </CircleMarker>
         ))}
         {pins.map((p) => (
-          <CircleMarker key={`p${p.lat},${p.lon}`} center={[p.lat, p.lon]} radius={9} pathOptions={{ color: '#fff', weight: 3, fillColor: p.colour ?? '#2563eb', fillOpacity: 1 }}>
+          <CircleMarker key={`p${p.lat},${p.lon}`} center={[p.lat, p.lon]} radius={9} pathOptions={{ color: '#fff', weight: 3, fillColor: p.colour ?? '#0f6b5c', fillOpacity: 1 }}>
             <Tooltip permanent direction="top" offset={[0, -8]}>{p.label}</Tooltip>
           </CircleMarker>
         ))}
-        {picked && <CircleMarker center={[picked.lat, picked.lon]} radius={10} pathOptions={{ color: '#fff', weight: 4, fillColor: '#111827', fillOpacity: 1 }} />}
+        {picked && <CircleMarker center={[picked.lat, picked.lon]} radius={10} pathOptions={{ color: '#fff', weight: 3, fillColor: '#1a1c1e', fillOpacity: 1 }} />}
       </MapContainer>
     </div>
   )

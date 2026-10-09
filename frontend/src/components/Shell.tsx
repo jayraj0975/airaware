@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import { api } from '../api'
 import { useSession } from '../session'
 import { shortDate } from '../util'
-import { Dialog, ErrorBoundary, Spinner, toast, Toaster } from './ui'
+import { Dialog, ErrorBoundary, Icon, Spinner, toast, Toaster } from './ui'
 
 export default function Shell() {
   const { user, unread, status, city, setCity, setUser } = useSession()
@@ -13,8 +13,8 @@ export default function Shell() {
   const signOut = async () => {
     await api.post('/api/auth/logout').catch(() => undefined)
     navigator.serviceWorker?.controller?.postMessage('signed-out')  // drop anything cached while signed in
+    nav('/')  // leave a members-only page first, or its guard would send us to the sign-in page
     setUser(null)
-    nav('/')
   }
   const links = [['/', 'Today'], ['/explore', 'Insights'], ['/compare', 'Compare'], ['/science', 'Science'], ['/track-record', 'Track record'], ['/about', 'About']]
   return (
@@ -24,7 +24,7 @@ export default function Shell() {
           <img src="/favicon.svg" alt="" width={34} height={34} />
           <div><b>AirAware</b><small>Know your air, a week ahead</small></div>
         </Link>
-        <button className="menu-btn" aria-label="Menu" onClick={() => setOpen(!open)}>☰</button>
+        <button className="menu-btn icon-btn" aria-label="Menu" aria-expanded={open} onClick={() => setOpen(!open)}><Icon name={open ? 'close' : 'menu'} size={20} /></button>
         <nav className={`links ${open ? 'open' : ''}`} onClick={() => setOpen(false)}>
           {links.map(([to, label]) => <NavLink key={to} to={to} end={to === '/'}>{label}</NavLink>)}
           {user?.role === 'admin' && <NavLink to="/admin" className="admin-link">Admin</NavLink>}
@@ -38,7 +38,7 @@ export default function Shell() {
           {user ? (
             <>
               <Link to="/me#notifications" className="bell" title="Notifications" aria-label={`${unread} unread notifications`}>
-                🔔{unread > 0 && <span>{unread > 9 ? '9+' : unread}</span>}
+                <Icon name="bell" size={18} />{unread > 0 && <span>{unread > 9 ? '9+' : unread}</span>}
               </Link>
               <Link to="/me" className="avatar" title={user.email}>{user.name.slice(0, 1).toUpperCase()}</Link>
               <button className="ghost small" onClick={signOut}>Sign out</button>

@@ -1,7 +1,7 @@
 import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { Category, ForecastDay, Personal } from '../api'
-import { dayName, fmt } from '../util'
+import { AQI_BANDS, dayName, fmt } from '../util'
 
 export function Card({ title, hint, children, className = '', action }: { title?: ReactNode; hint?: ReactNode; children: ReactNode; className?: string; action?: ReactNode }) {
   return (
@@ -17,37 +17,77 @@ export function Card({ title, hint, children, className = '', action }: { title?
   )
 }
 
+/** Category name with a small colour mark: the colour carries meaning without shouting. */
 export const Pill = ({ cat }: { cat: Category | { name: string; colour: string } }) => (
-  <span className="pill" style={{ background: cat.colour }}>{cat.name}</span>
+  <span className="pill"><i style={{ background: cat.colour }} />{cat.name}</span>
 )
 
-export function AqiHero({ label, value, cat, sub, children }: { label: ReactNode; value: number; cat: Category; sub?: ReactNode; children?: ReactNode }) {
+/** The 0–500 AQI scale in CPCB's bands, with the likely range bracketed and the forecast marked. */
+export function AqiMeter({ value, lo, hi }: { value: number; lo?: number; hi?: number }) {
+  const pos = (v: number) => `${Math.max(0, Math.min(100, (v / 500) * 100))}%`
+  let from = 0
   return (
-    <div className="aqi-hero" style={{ background: cat.colour }}>
-      <div className="label">{label}</div>
-      <div className="num">{fmt(value)}</div>
-      <div className="cat">{cat.name}</div>
-      {sub && <div className="sub">{sub}</div>}
+    <div className="meter" role="img" aria-label={`AQI ${fmt(value)} on a scale of 0 to 500${lo != null && hi != null ? `, likely ${fmt(lo)} to ${fmt(hi)}` : ''}`}>
+      <div className="meter-bar">
+        {AQI_BANDS.map((b) => { const w = b.upto - from; const el = <span key={b.upto} style={{ flexGrow: w, background: b.colour }} />; from = b.upto; return el })}
+      </div>
+      {lo != null && hi != null && <div className="meter-range" style={{ left: pos(lo), width: `calc(${pos(hi)} - ${pos(lo)})` }} />}
+      <div className="meter-mark" style={{ left: pos(value) }} />
+      <div className="meter-scale"><span>0</span><span>100</span><span>200</span><span>300</span><span>400</span><span>500</span></div>
+    </div>
+  )
+}
+
+/** A forecast figure: the number, its category and where it sits on the AQI scale. */
+export function Reading({ label, value, cat, lo, hi, size = 'large', children }: {
+  label: ReactNode; value: number; cat: Category | { name: string; colour: string }; lo?: number; hi?: number; size?: 'large' | 'medium'; children?: ReactNode
+}) {
+  return (
+    <div className={`reading ${size}`}>
+      <div className="reading-label">{label}</div>
+      <div className="reading-row"><span className="reading-num">{fmt(value)}</span><span className="reading-cat"><i style={{ background: cat.colour }} />{cat.name}</span></div>
+      <AqiMeter value={value} lo={lo} hi={hi} />
       {children}
     </div>
   )
 }
 
 export const Advice = ({ p }: { p: Personal }) => (
-  <div className={`advice ${p.level}`}><b>{p.level === 'ok' ? 'Good to go' : p.level === 'caution' ? 'Take care' : 'Limit time outside'}.</b> {p.text}</div>
+  <p className={`advice ${p.level}`}><b>{p.level === 'ok' ? 'Good to go.' : p.level === 'caution' ? 'Take care.' : 'Limit time outside.'}</b> {p.text}</p>
 )
 
-export function DayStrip({ days, compact = false }: { days: ForecastDay[]; compact?: boolean }) {
+/** The coming days as a compact list: day, colour mark, number. */
+export function DayStrip({ days }: { days: ForecastDay[]; compact?: boolean }) {
   return (
-    <div className={`days ${compact ? 'compact' : ''}`}>
+    <ol className="days">
       {days.map((f) => (
-        <div key={f.date} style={{ background: f.category.colour }} title={`Likely ${fmt(f.lo)}–${fmt(f.hi)}`}>
-          <span>{dayName(f.date)}</span><b>{fmt(f.forecast)}</b>{!compact && <small>{f.category.name}</small>}
-        </div>
+        <li key={f.date} title={`${f.category.name} · likely ${fmt(f.lo)}–${fmt(f.hi)}`}>
+          <span className="day">{dayName(f.date)}</span>
+          <i style={{ background: f.category.colour }} />
+          <b>{fmt(f.forecast)}</b>
+        </li>
       ))}
-    </div>
+    </ol>
   )
 }
+
+const PATHS: Record<string, ReactNode> = {
+  bell: <><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></>,
+  menu: <><path d="M4 6h16M4 12h16M4 18h16" /></>,
+  close: <><path d="M18 6 6 18M6 6l12 12" /></>,
+  star: <><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z" /></>,
+  share: <><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><path d="m16 6-4-4-4 4M12 2v13" /></>,
+  flag: <><path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H5" /></>,
+  download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5M12 15V3" /></>,
+  check: <><path d="M20 6 9 17l-5-5" /></>,
+  pin: <><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0z" /><circle cx="12" cy="10" r="3" /></>,
+  calendar: <><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></>,
+}
+
+/** Simple line icons (no emoji): name one of the keys above. */
+export const Icon = ({ name, size = 16 }: { name: keyof typeof PATHS; size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{PATHS[name]}</svg>
+)
 
 export const Spinner = ({ label = 'Loading…' }: { label?: string }) => <div className="spinner"><i />{label}</div>
 export const ErrorBox = ({ error }: { error: unknown }) => <div className="error">{error instanceof Error ? error.message : String(error)}</div>
@@ -115,7 +155,7 @@ export function Dialog({ title, children, onClose }: { title: string; children: 
   return createPortal(
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="dialog" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="dialog-head"><h2>{title}</h2><button type="button" className="link" aria-label="Close" onClick={onClose}>✕</button></div>
+        <div className="dialog-head"><h2>{title}</h2><button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><Icon name="close" /></button></div>
         {children}
       </div>
     </div>,

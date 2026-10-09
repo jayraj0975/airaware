@@ -76,7 +76,7 @@ function OverviewTab() {
           <p className="small muted">Models trained {dateTime(o.trained_at)}. Live readings: {o.live.at ? `${o.live.stations} stations at ${dateTime(o.live.at)}` : 'off (set OPENAQ_API_KEY)'}.</p>
         </Card>
         <Card title="Sign-ups, last 30 days">
-          {o.signups.length ? <Bars labels={o.signups.map((s) => shortDate(s.day))} values={o.signups.map((s) => s.n)} colours={o.signups.map(() => '#2563eb')} /> : <Empty>No sign-ups in the last 30 days.</Empty>}
+          {o.signups.length ? <Bars labels={o.signups.map((s) => shortDate(s.day))} values={o.signups.map((s) => s.n)} colours={o.signups.map(() => '#0f6b5c')} /> : <Empty>No sign-ups in the last 30 days.</Empty>}
         </Card>
       </div>
     </>
