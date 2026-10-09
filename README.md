@@ -1,22 +1,58 @@
 # AirAware
 
-Forecasts the Air Quality Index (AQI) for **Pune** and **Mumbai** up to a week ahead, from real government
-monitoring stations and the weather forecast. Every forecast comes with an 80% range, the chance of a Poor day,
-health advice, and an exact breakdown of why the model said what it said.
+A website that forecasts the Air Quality Index (AQI) for **Pune** and **Mumbai** up to a week ahead, from real
+government monitoring stations, live weather and the Copernicus CAMS particle forecast. Click any area on the map to
+see its estimated air quality, its forecast, the weather there right now and the nearest stations. Every forecast comes
+with an 80% range, the chance of a Poor day and health advice.
 
 DS/ML mini project. Fits the suggested title *Weather Data Analysis and Prediction System*.
 
 ## Run it
 
+The website, on your own machine:
+
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/streamlit run app.py          # GUI at http://localhost:8501 (uses data/daily.csv, works offline)
+.venv/bin/uvicorn airaware.web:app --port 8000   # http://localhost:8000
+```
+
+Or with Docker, which keeps itself up to date and restarts on boot:
+
+```sh
+docker build -t airaware . && docker run -d --name airaware --restart unless-stopped -p 8000:8000 -v airaware-data:/app/data airaware
+# or: docker compose up -d   (needs the compose plugin)
+```
+
+**Live station readings.** The public archive runs about four days behind. A free OpenAQ API key
+([explore.openaq.org](https://explore.openaq.org), two minutes to get) switches the site to live hourly CPCB readings, so
+"tomorrow" becomes a true next-day forecast: start it with `OPENAQ_API_KEY=... uvicorn ...` or `docker run -e OPENAQ_API_KEY=...`.
+
+Other commands:
+
+```sh
+.venv/bin/streamlit run app.py          # the analysis app with replay, what-if sliders and per-forecast explanations
 .venv/bin/python -m airaware.model      # re-run the evaluation, writes reports/metrics.md
 .venv/bin/python -m airaware.data       # refresh data/daily.csv and data/stations.csv (first run ~10 min, then ~2 min)
 .venv/bin/python -m pytest              # tests
 ```
 
-## The GUI
+## The website
+
+| Section | What it shows |
+|---|---|
+| Header | City switch, and whether station readings are live or from the archive. |
+| Today | AirAware's forecast for today with its range, chance of a Poor day and health advice; tomorrow; the cleanest day and hours ahead; the weather now. |
+| Pick any area | A map of every station coloured by its AQI. Click anywhere: the area's name, estimated AQI (inverse-distance weighting of stations within 12 km), its forecast for the coming days, the weather there now, and the nearest stations. |
+| Forecast and weather | The last six weeks and the week ahead with the 80% range; temperature, humidity and mixing height for the next 48 hours. |
+| Stations | Every station's latest reading and whether it agrees with the rest of the city. |
+| Insights | When in the day the air is cleanest, the Diwali effect, the year in air, the past year in cigarettes. |
+| How good is it? | AirAware against baselines with the significance test, error 1-7 days ahead, what the model relies on. |
+
+The site refreshes itself: archive readings, weather and CAMS every 6 hours (then the models retrain), and live readings
+every hour when a key is set. The API is plain JSON: `/api/status`, `/api/overview?city=`, `/api/stations?city=`,
+`/api/area?lat=&lon=`, `/api/model`, `/api/insights?city=`.
+
+## The analysis app (Streamlit)
 
 | Tab | What it shows |
 |---|---|
@@ -33,7 +69,12 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
   15-minute readings from [OpenAQ's public archive](https://openaq.org) (`openaq-data-archive` on AWS, no account needed).
 - **Weather**: ERA5 reanalysis from [Open-Meteo](https://open-meteo.com) (no key): temperature, humidity, rain, wind,
   pressure and boundary-layer (mixing) height at each city centre. Open-Meteo's forecast fills the last few days ERA5
-  has not reached yet and the week ahead.
+  has not reached yet and the week ahead. Current conditions come from Open-Meteo's live forecast API.
+- **CAMS**: the Copernicus Atmosphere Monitoring Service PM2.5 and PM10, through Open-Meteo (no key): its analysis for
+  every day since August 2022 and its forecast for the next four days. CAMS reads 2-4× low in Indian cities because
+  it misses local road dust, but it rises and falls with the stations (correlation 0.88 in Pune), so it is a strong
+  input. On its own, even scaled to the stations, it was a worse live estimate than the four-day-old reading (Pune MAE
+  24 vs 16), so the site does not show it as a live AQI.
 
 ### Cleaning (`airaware/data.py`)
 
@@ -59,10 +100,11 @@ February 2025 to October 2026. That gives about 1,460 city-days with an AQI.
 Each row is one city on one evening D. The features are what is known that evening:
 
 - today's AQI, PM2.5 and PM10, yesterday's and the day before's AQI, and the 7-day average;
-- today's weather and **tomorrow's weather**; at forecast time tomorrow's comes from a weather forecast;
+- today's weather and **the target day's weather**; at forecast time that comes from a weather forecast;
+- today's CAMS particles and **CAMS's forecast for the target day**;
 - the season, the day of the week, whether it is Diwali week, and the city.
 
-The target is the AQI on D+h for h = 1 to 7 days; the weather inputs are those of the target day. A test (`tests/test_airaware.py`) checks that no feature uses anything from the target day.
+The target is the AQI on D+h for h = 1 to 7 days; the weather and CAMS inputs are those of the target day. A test (`tests/test_airaware.py`) checks that no feature uses anything from the target day.
 
 AQI changes slowly from day to day, so a model that predicts the AQI level directly lost to simply saying
 "tomorrow = today". AirAware instead predicts the **change** from today, using ridge (linear) regression.
@@ -76,28 +118,29 @@ target had already been measured, and then forecasts that month. This covers 660
 | Persistence (tomorrow = today) | 12.42 | 18.10 | 0.864 | 76.8% | 61.5% |
 | 7-day average | 17.95 | 25.51 | 0.730 | 66.5% | 11.5% |
 | Seasonal average (city, month) | 28.87 | 40.07 | 0.333 | 56.4% | 0% |
-| Linear regression on the AQI level | 13.63 | 19.43 | 0.843 | 77.4% | **65.4%** |
-| Gradient boosting on the change | 11.95 | 17.39 | 0.874 | 78.9% | 50.0% |
-| AirAware without tomorrow's weather | 12.30 | 17.57 | 0.872 | 76.4% | 57.7% |
-| **AirAware** (linear regression on the change) | **11.56** | **16.63** | **0.885** | **79.5%** | 61.5% |
+| Linear regression on the AQI level | 12.69 | 18.16 | 0.863 | 79.1% | **65.4%** |
+| Gradient boosting on the change | 11.28 | 16.54 | 0.886 | 79.8% | 50.0% |
+| AirAware without tomorrow's forecasts (weather and CAMS) | 12.24 | 17.56 | 0.872 | 77.4% | 57.7% |
+| AirAware without CAMS | 11.56 | 16.63 | 0.885 | 79.5% | 61.5% |
+| **AirAware** (linear regression on the change) | **10.44** | **15.41** | **0.901** | **82.6%** | 61.5% |
 
 MAE is in AQI points. Poor-day recall is the share of days that were actually Poor or worse (AQI > 200) that the
 method also called Poor or worse.
 
 **Is the gain real?** A Diebold-Mariano test (absolute error, Newey-West variance over 7 days because daily errors are
-autocorrelated) gives statistic −2.67, p = 0.008: AirAware's lower error is statistically significant.
+autocorrelated) gives statistic −5.37, p < 0.001: AirAware's lower error is statistically significant.
 
 **Further ahead.** The same walk-forward test for each horizon, against repeating the last reading:
 
 | Days ahead | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| AirAware MAE | 11.6 | 16.3 | 19.0 | 20.6 | 21.3 | 22.3 | 22.6 |
+| AirAware MAE | 10.4 | 14.3 | 16.5 | 17.8 | 18.1 | 18.7 | 18.6 |
 | Last reading repeated MAE | 12.4 | 17.9 | 21.0 | 23.3 | 25.3 | 26.4 | 26.7 |
-| AirAware 80% range coverage | 88% | 88% | 87% | 86% | 86% | 86% | 86% |
+| AirAware 80% range coverage | 88% | 88% | 87% | 85% | 86% | 86% | 85% |
 
 **Uncertainty.** The 80% range is split conformal: the 10th and 90th percentiles of AirAware's own errors in earlier
 walk-forward months (in-sample errors until 60 exist). The chance of a Poor day is the share of those past errors that
-would lift the forecast above 200. On the test months the ranges held the real AQI 86-88% of the time, slightly more
+would lift the forecast above 200. On the test months the ranges held the real AQI 85-88% of the time, slightly more
 than the 80% promised.
 
 **Explanations.** AirAware is linear, so each forecast splits exactly into today's AQI, a baseline change, and one
@@ -119,10 +162,11 @@ push per input (coefficient × standardised input). The app shows the largest pu
 
 What this shows:
 
-- AirAware beats "tomorrow = today" by about 7% on MAE and gets the AQI category right on 80% of days instead of 77%.
-  The advantage grows with the horizon: 10% at 3 days, 16% at 5.
-- Most of the next-day gain is in Pune: MAE 11.6 vs 13.4. In Mumbai it ties persistence (11.5 vs 11.5).
-- Tomorrow's weather helps: without it, MAE rises from 11.56 to 12.30.
+- AirAware beats "tomorrow = today" by 16% on MAE and gets the AQI category right on 83% of days instead of 77%.
+  The advantage grows with the horizon: 21% at 3 days, 29% at 5.
+- It wins in both cities: Pune MAE 10.6 vs 13.4, Mumbai 10.2 vs 11.5.
+- CAMS is the biggest single gain: without it, MAE rises from 10.44 to 11.56. Without any target-day forecasts
+  (weather and CAMS), it rises to 12.24.
 - Temperature is the strongest weather input. Holding today fixed, the model expects worse air when tomorrow is warmer than today. This is an association learned from about 20 months of data, not a proven cause.
 - For catching Poor days, plain linear regression on the level does best (65%). That trade-off is a fair one to discuss in the viva.
 
@@ -130,12 +174,15 @@ What this shows:
 
 - The training data is small and has a gap: no usable data for 2023–2024.
 - City AQI is a station average, so it shifts a little as stations go offline and come back.
-- The test uses actual (ERA5) weather in place of a weather forecast, so real-time accuracy will be a little worse,
-  more so several days ahead where weather forecasts themselves are less accurate.
+- The test uses actual (ERA5) weather and the CAMS analysis in place of their forecasts, so real-time accuracy will be
+  a little worse, more so several days ahead where those forecasts are less accurate.
 - Live forecasts mix two weather sources: ERA5 for the past, Open-Meteo's forecast model for the last few days and the week ahead.
 - The AQI is computed from PM only, not CPCB's official multi-pollutant AQI. The two agree on most days.
-- The OpenAQ archive runs about four days behind, so "tomorrow" is really a 5-day-ahead forecast from the last reading.
-  A live CPCB feed (data.gov.in, needs an API key) would cut that to a true next-day forecast.
+- Without an OpenAQ key the archive runs about four days behind, so "tomorrow" is really a 5-day-ahead forecast from
+  the last reading. The live path (OpenAQ API) is covered by tests with recorded responses but has not been run
+  against the real API without a key.
+- An area's estimate interpolates between stations, so it cannot see a source between them (a busy junction,
+  a construction site). Areas far from any station fall back to the nearest one.
 
 ## Project layout
 
@@ -144,10 +191,14 @@ airaware/aqi.py      CPCB breakpoints, sub-index, categories, health advice
 airaware/data.py     download, cleaning, daily city table, station table, weather history + forecast
 airaware/model.py    features, baselines, walk-forward evaluation, ranges, significance test, explanations, live forecast
 airaware/insights.py daily rhythm, Diwali effect, dominant particle, station agreement, cigarette equivalent
-app.py               Streamlit GUI
+airaware/live.py     live weather, any-point estimates, place names, optional live OpenAQ readings
+airaware/web.py      FastAPI website: JSON API, background refresh, serves web/
+web/                 the dashboard (HTML, CSS, JavaScript with Leaflet and Chart.js)
+app.py               Streamlit analysis app
+Dockerfile, compose.yaml  self-hosting
 data/daily.csv       the cleaned daily city table, including the week-ahead weather (raw downloads are cached in data/raw/)
 data/stations.csv    daily AQI per station with its position
 data/hourly_profile.csv  average PM by city, month and hour of day
 reports/metrics.md   latest evaluation
-tests/               AQI maths, cleaning rules, no-leakage checks, training cutoff, explanations, ranges, DM test, insights
+tests/               API smoke test, live-reading handling, AQI maths, cleaning rules, no-leakage checks, training cutoff, explanations, ranges, DM test, insights
 ```

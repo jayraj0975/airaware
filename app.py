@@ -20,6 +20,8 @@ NAMES = {
     "temp_next": "Tomorrow's temperature", "humidity_next": "Tomorrow's humidity", "rain_next": "Tomorrow's rain",
     "wind_next": "Tomorrow's wind speed", "wind_u_next": "Tomorrow's east-west wind", "wind_v_next": "Tomorrow's north-south wind",
     "pressure_next": "Tomorrow's air pressure", "blh_next": "Tomorrow's mixing height",
+    "cams_pm25": "CAMS PM2.5 today", "cams_pm10": "CAMS PM10 today",
+    "cams_pm25_next": "CAMS PM2.5 forecast for tomorrow", "cams_pm10_next": "CAMS PM10 forecast for tomorrow",
 }
 ORDER = [c[1] for c in CATEGORIES]
 DAY = pd.Timedelta(days=1)
@@ -72,7 +74,7 @@ st.caption("Air quality forecasts for Pune and Mumbai, up to a week ahead, from 
 city = st.sidebar.radio("City", ["Pune", "Mumbai"])
 st.sidebar.markdown(f"**{len(set(STATIONS[city].values()))} CPCB stations** averaged into one city AQI.")
 st.sidebar.markdown("AQI uses CPCB's PM2.5 and PM10 sub-indices. Data: OpenAQ archive of CPCB readings; weather: ERA5 and the "
-                    "Open-Meteo forecast.")
+                    "Open-Meteo forecast; particle forecast: Copernicus CAMS.")
 if st.sidebar.button("Fetch latest data", help="Downloads new station readings and the latest weather forecast (a minute or two)."):
     with st.spinner("Downloading station readings and the weather forecast…"):
         try:

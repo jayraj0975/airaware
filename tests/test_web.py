@@ -1,0 +1,68 @@
+"""API smoke test on the committed data, with the network calls stubbed out."""
+
+import os
+
+import pandas as pd
+import pytest
+from fastapi.testclient import TestClient
+
+os.environ["AIRAWARE_REFRESH"] = "0"
+
+from airaware import live, web  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def client():
+    weather = {"current": {"time": "2026-10-09T21:00", "temperature_2m": 27.0, "relative_humidity_2m": 50, "apparent_temperature": 28.0,
+                           "precipitation": 0, "weather_code": 0, "wind_speed_10m": 4.0, "wind_direction_10m": 270, "surface_pressure": 950},
+               "hourly": {"time": ["2026-10-09T21:00"], "temperature_2m": [27.0]}}
+    mp = pytest.MonkeyPatch()
+    mp.setattr(live, "weather_now", lambda lat, lon: weather)
+    mp.setattr(live, "place_name", lambda lat, lon: "Test Nagar, Pune")
+    with TestClient(web.app) as c:
+        yield c
+    mp.undo()
+
+
+def test_pages_and_api(client):
+    assert client.get("/").status_code == 200
+    assert client.get("/static/app.js").status_code == 200
+    status = client.get("/api/status").json()
+    assert set(status["cities"]) == {"Pune", "Mumbai"} and status["live_readings"] is False
+
+    o = client.get("/api/overview?city=Pune").json()
+    assert o["forecast"] and o["measured"]["aqi"] > 0 and o["weather"]["current"]["temperature_2m"] == 27.0
+    assert client.get("/api/overview?city=Delhi").status_code == 404
+
+    s = client.get("/api/stations?city=Pune").json()
+    assert s["source"] == "archive" and all(st["category"]["name"] for st in s["stations"])
+
+    a = client.get("/api/area?lat=18.507&lon=73.807").json()
+    assert a["city"] == "Pune" and a["place"] == "Test Nagar, Pune" and a["measured"]["used"] >= 1 and a["forecast"]
+    assert client.get("/api/area?lat=28.6&lon=77.2").status_code == 404  # Delhi is outside the coverage
+
+    m = client.get("/api/model").json()
+    assert m["dm"]["p"] < 0.05 and len(m["horizons"]) == 14
+    i = client.get("/api/insights?city=Mumbai").json()
+    assert len(i["hourly"]) == 12 * 24 and i["cigarettes_year"] > 0
+
+
+def test_live_readings_start_the_forecast_today():
+    st = pd.DataFrame({"station": ["A", "B"], "city": "Pune"})
+    today = pd.Timestamp.today().normalize()
+    daily = pd.DataFrame({"date": [today], "city": ["Pune"], "aqi": [float("nan")], "pm25": [float("nan")], "pm10": [float("nan")], "stations": [0.0]})
+    readings = pd.DataFrame({"station": ["A", "B"], "aqi": [100.0, 120.0], "pm25": [40.0, 50.0], "pm10": [100.0, 120.0]})
+    d = web.with_live_day(daily, readings, st)
+    assert d.loc[0, "aqi"] == 110 and d.loc[0, "stations"] == 2
+
+
+def test_openaq_parsing(monkeypatch):
+    hours = [{"value": v, "period": {"datetimeTo": {"local": f"2026-10-09T{h:02d}:00:00+05:30"}}} for h, v in enumerate([45.0] * 20 + [999.0])]
+    def fake(url, params, headers=None):
+        if url.endswith("/locations/1"):
+            return {"results": [{"coordinates": {"latitude": 18.5, "longitude": 73.8},
+                                 "sensors": [{"id": 11, "parameter": {"name": "pm25"}}, {"id": 12, "parameter": {"name": "no2"}}]}]}
+        return {"results": hours}
+    monkeypatch.setattr(live, "_json", fake)
+    df = live.openaq_latest({1: "Test"}, key="k", pause=0)
+    assert len(df) == 1 and df.loc[0, "pm25"] == 45 and df.loc[0, "aqi"] == 75  # 999 error code dropped

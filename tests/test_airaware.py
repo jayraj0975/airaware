@@ -51,7 +51,7 @@ def test_features_use_nothing_from_the_target_day():
     days = pd.date_range("2024-01-01", periods=30)
     daily = pd.DataFrame({"date": days, "city": "Pune", "aqi": np.arange(30.0) * 5 + 50, "pm25": 30.0, "pm10": 60.0,
                           "temp": 25.0, "humidity": 60.0, "rain": 0.0, "wind": 8.0, "wind_u": 1.0, "wind_v": 1.0,
-                          "pressure": 1010.0, "blh": 600.0})
+                          "pressure": 1010.0, "blh": 600.0, "cams_pm25": 20.0, "cams_pm10": 30.0})
     a = features(daily).set_index("date")
     changed = daily.copy()
     changed.loc[changed["date"] == "2024-01-16", ["aqi", "pm25", "pm10"]] = [999.0, 999.0, 999.0]
@@ -66,7 +66,8 @@ def _toy(n=60):
     rng = np.random.default_rng(0)
     return pd.DataFrame({"date": days, "city": "Pune", "aqi": 100 + rng.normal(0, 20, n), "pm25": 30.0, "pm10": 60.0,
                          "temp": 25 + rng.normal(0, 2, n), "humidity": 60.0, "rain": 0.0, "wind": 8.0, "wind_u": 1.0,
-                         "wind_v": 1.0, "pressure": 1010.0, "blh": 600 + rng.normal(0, 50, n)})
+                         "wind_v": 1.0, "pressure": 1010.0, "blh": 600 + rng.normal(0, 50, n),
+                         "cams_pm25": 20 + rng.normal(0, 5, n), "cams_pm10": 30.0})
 
 
 def test_horizon_features_and_training_cutoff():

@@ -53,6 +53,8 @@ STATIONS = {
 ARCHIVE = "https://openaq-data-archive.s3.amazonaws.com"
 WX_HISTORY = "https://archive-api.open-meteo.com/v1/archive"
 WX_FORECAST = "https://api.open-meteo.com/v1/forecast"
+CAMS_API = "https://air-quality-api.open-meteo.com/v1/air-quality"
+CAMS_START = "2022-08-01"  # first day Open-Meteo serves CAMS for
 WEATHER = ["temperature_2m", "relative_humidity_2m", "precipitation", "wind_speed_10m",
            "wind_direction_10m", "pressure_msl", "boundary_layer_height"]
 
@@ -194,6 +196,19 @@ def city_weather(city: str) -> pd.DataFrame:
     return history.combine_first(weather_hourly(city, past_days=10))
 
 
+def cams_daily(city: str, end: str) -> pd.DataFrame:
+    """Daily mean PM2.5/PM10 from Copernicus CAMS: its analysis for the past, its forecast for the next four days.
+
+    CAMS reads low in Indian cities, but it rises and falls with the stations, which is what the model needs.
+    """
+    lat, lon = CITIES[city]
+    q = {"latitude": lat, "longitude": lon, "hourly": "pm2_5,pm10", "timezone": TZ, "start_date": CAMS_START, "end_date": end}
+    h = pd.DataFrame(json.loads(_url(f"{CAMS_API}?{urllib.parse.urlencode(q)}"))["hourly"])
+    h["time"] = pd.to_datetime(h["time"])
+    g = h.set_index("time").resample("D")
+    return pd.DataFrame({"cams_pm25": g["pm2_5"].mean(), "cams_pm10": g["pm10"].mean()}).where(g["pm2_5"].count() >= 18)
+
+
 def weather_daily(h: pd.DataFrame) -> pd.DataFrame:
     rad = np.deg2rad(h["wind_direction_10m"])
     h = h.assign(wind_u=-h["wind_speed_10m"] * np.sin(rad), wind_v=-h["wind_speed_10m"] * np.cos(rad))  # blowing towards E / N
@@ -213,7 +228,8 @@ def build() -> tuple[pd.DataFrame, pd.DataFrame]:
     for city in CITIES:
         air, st, profile = city_air(city)
         profiles.append(profile)
-        d = weather_daily(city_weather(city)).join(air, how="left").loc[START:end]  # keep weather-only days: lags must see the gaps
+        cams_end = str(date.today() + timedelta(days=4))  # as far as the CAMS forecast reaches
+        d = weather_daily(city_weather(city)).join(cams_daily(city, cams_end)).join(air, how="left").loc[START:end]  # keep weather-only days: lags must see the gaps
         d.insert(0, "city", city)
         frames.append(d)
         stations.append(st)

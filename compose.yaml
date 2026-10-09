@@ -1,0 +1,10 @@
+services:
+  airaware:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}  # optional: live hourly CPCB readings (free key from explore.openaq.org)
+    volumes: ["airaware-data:/app/data"]
+    restart: unless-stopped
+volumes:
+  airaware-data:

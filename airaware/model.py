@@ -23,10 +23,11 @@ from airaware.data import load
 
 REPORT = Path(__file__).resolve().parent.parent / "reports" / "metrics.md"
 WX = ["temp", "humidity", "rain", "wind", "wind_u", "wind_v", "pressure", "blh"]
+CAMS = ["cams_pm25", "cams_pm10"]  # Copernicus CAMS particles: analysis for the past, its forecast at prediction time
 DIWALI = pd.to_datetime(["2020-11-14", "2021-11-04", "2022-10-24", "2023-11-12", "2024-11-01", "2025-10-21", "2026-11-08"])
 
-TODAY = ["aqi", "aqi_lag1", "aqi_lag2", "aqi_7d", "pm25", "pm10", *WX, "doy_sin", "doy_cos", "weekday", "diwali", "mumbai"]
-FORECAST = [w + "_next" for w in WX]
+TODAY = ["aqi", "aqi_lag1", "aqi_lag2", "aqi_7d", "pm25", "pm10", *WX, *CAMS, "doy_sin", "doy_cos", "weekday", "diwali", "mumbai"]
+FORECAST = [w + "_next" for w in WX + CAMS]
 FEATURES = TODAY + FORECAST
 # Days ahead. The public archive runs about four days behind, so "tomorrow" is usually five days after the last reading.
 HORIZONS = range(1, 8)
@@ -41,10 +42,10 @@ def features(daily: pd.DataFrame, h: int = 1) -> pd.DataFrame:
     out = []
     for city, d in daily.groupby("city"):
         d = d.set_index("date").asfreq("D").assign(city=city)
-        f = d[["city", "aqi", "pm25", "pm10", *WX]].copy()
+        f = d[["city", "aqi", "pm25", "pm10", *WX, *CAMS]].copy()
         f["aqi_lag1"], f["aqi_lag2"] = d["aqi"].shift(1), d["aqi"].shift(2)
         f["aqi_7d"] = d["aqi"].rolling(7, min_periods=4).mean()
-        for w in WX:
+        for w in WX + CAMS:
             f[w + "_next"] = d[w].shift(-h)
         nxt = f.index + pd.Timedelta(days=h)
         doy = 2 * np.pi * nxt.dayofyear / 365.25
@@ -82,6 +83,10 @@ def dm_test(loss_a: np.ndarray, loss_b: np.ndarray, lags: int = 7) -> tuple[floa
     var = dc @ dc / n + 2 * sum((1 - k / (lags + 1)) * (dc[k:] @ dc[:-k]) / n for k in range(1, lags + 1))
     stat = d.mean() / math.sqrt(var / n)
     return stat, math.erfc(abs(stat) / math.sqrt(2))
+
+
+def p_text(p: float) -> str:
+    return "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
 
 
 def interval(pred: np.ndarray, residuals: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -148,7 +153,8 @@ def predict_month(tr: pd.DataFrame, te: pd.DataFrame) -> tuple[dict, ChangeModel
     }
     preds["Linear regression on the AQI level"] = ridge().fit(tr[FEATURES], tr["target"]).predict(te[FEATURES])
     preds["Gradient boosting on the change"] = ChangeModel(gbm).fit(tr, tr["target"]).predict(te)
-    preds["AirAware without tomorrow's weather"] = ChangeModel(cols=tuple(TODAY)).fit(tr, tr["target"]).predict(te)
+    preds["AirAware without tomorrow's forecasts"] = ChangeModel(cols=tuple(TODAY)).fit(tr, tr["target"]).predict(te)
+    preds["AirAware without CAMS"] = ChangeModel(cols=tuple(c for c in FEATURES if not c.startswith("cams"))).fit(tr, tr["target"]).predict(te)
     model = ChangeModel().fit(tr, tr["target"])
     preds[AIRAWARE] = model.predict(te)
     return preds, model
@@ -247,7 +253,7 @@ def write_report(r: Result) -> str:
         f"{r.test['date'].max() + pd.Timedelta(days=1):%d %b %Y}. Lower MAE/RMSE is better.\n\n"
         f"## Both cities\n\n{both.round(3).to_markdown()}\n\n## MAE by city\n\n{per_city.round(1).to_markdown()}\n\n"
         f"Diebold-Mariano test, AirAware against persistence (absolute error, Newey-West 7 lags): "
-        f"statistic {r.dm[0]:.2f}, p = {r.dm[1]:.3f}.\n\n"
+        f"statistic {r.dm[0]:.2f}, {p_text(r.dm[1])}.\n\n"
         f"## Further ahead\n\n{r.horizons.pivot(index='Days ahead', columns='Method', values=['MAE', '80% range coverage']).dropna(axis=1, how='all').round(3).to_markdown()}\n\n"
         f"## What the model relies on (permutation importance, MAE increase)\n\n{r.importance.head(12).round(2).rename("MAE increase").to_markdown()}\n"
     )
