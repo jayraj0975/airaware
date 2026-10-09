@@ -114,47 +114,30 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
 
 ## Run it
 
-**On your phone, over HTTPS** (self-hosted: your machine serves it through a Cloudflare tunnel; no Vercel or Render):
+Everything about running and hosting AirAware is in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**: requirements,
+the one recommended public setup (a small server running `compose.yaml` behind a named Cloudflare Tunnel), every
+setting, backups and troubleshooting. In short:
 
 ```sh
-docker compose up -d && docker compose logs tunnel | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com'
+cp .env.example .env                    # optional settings; never commit .env
+docker compose up -d                    # http://localhost:8000
+docker compose --profile quick up -d    # plus a temporary public HTTPS address, for laptop demos
+docker compose down                     # stop; data stays in the airaware-data volume
 ```
 
-Open that address on any phone, sign in, and "Add to Home screen" to install it. The quick tunnel's address changes
-if the tunnel restarts; a named Cloudflare tunnel gives a permanent one (see compose.yaml).
-
-**Docker on this machine only** (restarts on boot, data in a volume):
-
-```sh
-docker build -t airaware . && docker run -d --name airaware --restart unless-stopped -p 8000:8000 \
-  -v airaware-v2:/app/data airaware
-# or: docker compose up -d
-```
-
-Open http://localhost:8000 and sign up. Then make yourself an admin from the server (the only way; the site never
-grants admin on sign-up because it does not verify email ownership):
-`docker exec airaware python -m airaware.server.manage make-admin you@example.com`.
+After signing up, make yourself an admin from the machine running it (the only way: the site never grants admin on
+sign-up, because it does not verify email ownership), then turn on two-step sign-in to open the admin console:
+`docker compose exec airaware python -m airaware.server.manage make-admin you@example.com`.
 
 **Development:**
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
-cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
+cd frontend && npm ci && npm run dev                               # http://localhost:5173, proxies /api
 .venv/bin/python -m pytest                                         # 42 backend tests
-cd frontend && npm run build && npx playwright test                # end-to-end, desktop and phone
+cd frontend && npm run build && npx playwright test                # 20 browser tests, desktop and phone
 ```
-
-| Setting | Default | |
-|---|---|---|
-| `OPENAQ_API_KEY` | none | live hourly CPCB readings (free key from explore.openaq.org) |
-| `AIRAWARE_SECURE_COOKIES` | 0 | set to 1 when served over HTTPS |
-| `AIRAWARE_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | none | email alerts and password-reset emails |
-| `AIRAWARE_PUBLIC_URL` | none | the site's address, used in emailed links (e.g. https://airaware.example) |
-| `AIRAWARE_DB` | data/airaware.db | SQLite file |
-| `AIRAWARE_REBUILD_HOURS` | 6 | how often to download and retrain (sooner after startup if the data is stale) |
-| `AIRAWARE_TRUSTED_PROXIES` | none | reverse proxy addresses allowed to report the visitor's IP (the tunnel) |
-| `AIRAWARE_ADMIN_2FA` | 1 | set to 0 only for tests: admins need two-step sign-in |
 
 API docs (OpenAPI): http://localhost:8000/api/docs.
 

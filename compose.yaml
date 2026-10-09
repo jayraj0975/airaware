@@ -1,25 +1,48 @@
-# AirAware with a public HTTPS address: `docker compose up -d`, then `docker compose logs tunnel | grep trycloudflare`.
-# The quick tunnel needs no Cloudflare account; its address changes when the tunnel restarts. For a permanent
-# address, create a named tunnel in Cloudflare and replace the tunnel command with `tunnel run --token <token>`.
+# AirAware: the one deployment definition, used on a laptop and on a server.
+#
+#   docker compose up -d                      the site on http://localhost:8000 only
+#   docker compose --profile quick up -d      + temporary public HTTPS address (Cloudflare quick tunnel, no account;
+#                                               the address changes whenever the tunnel restarts; laptop demos only)
+#   docker compose --profile named up -d      + permanent HTTPS address (Cloudflare named tunnel; needs TUNNEL_TOKEN
+#                                               in .env; use this on the server, see docs/DEPLOYMENT.md)
+#   docker compose down                       stop (data stays in the airaware-data volume)
+#
+# Settings come from .env (copy .env.example). Never commit .env.
 services:
   airaware:
     build: .
-    ports: ["8000:8000"]                       # also reachable on this machine at http://localhost:8000
+    image: airaware:latest
+    ports: ["127.0.0.1:8000:8000"]           # this machine only; the public way in is the tunnel
     environment:
-      AIRAWARE_TRUSTED_PROXIES: 172.30.0.20    # only the tunnel may tell us a visitor's real address
-      AIRAWARE_SECURE_COOKIES: "1"             # sign-in cookie only over HTTPS (localhost still works)
-      OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}      # optional: live hourly CPCB readings
-      AIRAWARE_SMTP_HOST: ${AIRAWARE_SMTP_HOST:-}
+      AIRAWARE_TRUSTED_PROXIES: 172.30.0.20   # only the tunnel may report a visitor's real address
+      AIRAWARE_SECURE_COOKIES: ${AIRAWARE_SECURE_COOKIES:-1}
       AIRAWARE_PUBLIC_URL: ${AIRAWARE_PUBLIC_URL:-}
-    volumes: ["airaware-data:/app/data"]
+      OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
+      AIRAWARE_SMTP_HOST: ${AIRAWARE_SMTP_HOST:-}
+      AIRAWARE_SMTP_PORT: ${AIRAWARE_SMTP_PORT:-587}
+      AIRAWARE_SMTP_USER: ${AIRAWARE_SMTP_USER:-}
+      AIRAWARE_SMTP_PASSWORD: ${AIRAWARE_SMTP_PASSWORD:-}
+      AIRAWARE_SMTP_FROM: ${AIRAWARE_SMTP_FROM:-}
+    volumes: ["airaware-data:/app/data"]     # database, refreshed data, daily backups
     networks: { airaware-net: { ipv4_address: 172.30.0.10 } }
     restart: unless-stopped
 
-  tunnel:
+  tunnel-quick:
+    profiles: [quick]
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate --url http://172.30.0.10:8000
     networks: { airaware-net: { ipv4_address: 172.30.0.20 } }
-    depends_on: [airaware]
+    depends_on: { airaware: { condition: service_healthy } }
+    restart: unless-stopped
+
+  tunnel-named:
+    profiles: [named]
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}               # from .env; cloudflared refuses to start without it
+    networks: { airaware-net: { ipv4_address: 172.30.0.20 } }
+    depends_on: { airaware: { condition: service_healthy } }
     restart: unless-stopped
 
 networks:
