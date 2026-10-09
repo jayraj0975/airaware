@@ -241,9 +241,8 @@ function TwoStep() {
   const [setup, setSetup] = useState<{ secret: string; uri: string } | null>(null)
   const [code, setCode] = useState('')
   const [turningOff, setTurningOff] = useState(false)
-  const start = async () => {
-    try { setSetup(await api.post('/api/me/2fa/setup')) } catch (e) { toast((e as Error).message, 'error') }
-  }
+  const [asking, setAsking] = useState(false)
+  const start = async (password: string) => { setSetup(await api.post('/api/me/2fa/setup', { password })) }
   const enable = async () => {
     try { setUser(await api.post('/api/me/2fa/enable', { code })); setSetup(null); setCode(''); toast('Two-step sign-in is on. You will need a code each time you sign in.') }
     catch (e) { toast((e as Error).message, 'error') }
@@ -267,7 +266,9 @@ function TwoStep() {
     <div className="two-step">
       <b>Two-step sign-in</b>
       <p className="small muted">Adds a 6-digit code from an app like Google Authenticator or Authy, so a stolen password alone is not enough.{user!.role === 'admin' ? ' Required for the admin console.' : ''}</p>
-      {!setup ? <button type="button" className="ghost small" onClick={start}>Set up two-step sign-in</button> : (
+      {asking && <AskDialog title="Confirm it's you" label="Your password" type="password" ok="Continue"
+        note="Setting up two-step sign-in changes how you sign in, so we check your password first." onClose={() => setAsking(false)} onSubmit={start} />}
+      {!setup ? <button type="button" className="ghost small" onClick={() => setAsking(true)}>Set up two-step sign-in</button> : (
         <div className="two-step-setup">
           <img src={qr} alt="QR code to scan with your authenticator app" width={180} height={180} />
           <div>

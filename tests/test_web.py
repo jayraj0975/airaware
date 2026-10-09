@@ -426,7 +426,8 @@ def test_two_step_sign_in(app, monkeypatch):
     monkeypatch.setenv("AIRAWARE_ADMIN_2FA", "1")
     assert c.get("/api/admin/overview").status_code == 403  # admins need two-step on
 
-    setup = c.post("/api/me/2fa/setup", headers=H).json()
+    assert c.post("/api/me/2fa/setup", json={"password": "wrong-password"}, headers=H).status_code == 403  # a stolen session is not enough
+    setup = c.post("/api/me/2fa/setup", json={"password": "two-step-pass"}, headers=H).json()
     assert setup["uri"].startswith("otpauth://totp/AirAware") and len(setup["secret"]) >= 32
     step = int(_time.time() // 30)
     assert c.post("/api/me/2fa/enable", json={"code": "000000"}, headers=H).status_code == 400
@@ -451,3 +452,16 @@ def test_totp_matches_rfc_6238():
     # RFC 6238 test vector (SHA-1): secret "12345678901234567890", time 59 s -> 94287082 (last 6 digits 287082)
     secret = __import__("base64").b32encode(b"12345678901234567890").decode().rstrip("=")
     assert auth.totp_code(secret, 59 // 30) == "287082"
+
+
+def test_forwarded_address_trusted_only_from_the_proxy(monkeypatch):
+    from starlette.requests import Request as R
+
+    def req(host, headers):
+        return R({"type": "http", "client": (host, 1), "headers": [(k.encode(), v.encode()) for k, v in headers.items()], "scheme": "http",
+                  "server": ("x", 80), "path": "/", "query_string": b""})
+    monkeypatch.setenv("AIRAWARE_TRUSTED_PROXIES", "172.30.0.20")
+    assert auth.client_ip(req("172.30.0.20", {"cf-connecting-ip": "203.0.113.5"})) == "203.0.113.5"
+    assert auth.client_ip(req("10.0.0.9", {"cf-connecting-ip": "203.0.113.5"})) == "10.0.0.9"  # forged header ignored
+    assert auth.via_https(req("172.30.0.20", {"x-forwarded-proto": "https"}))
+    assert not auth.via_https(req("10.0.0.9", {"x-forwarded-proto": "https"}))

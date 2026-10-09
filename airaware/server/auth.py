@@ -90,8 +90,25 @@ def end_all_sessions(user_id: int) -> None:
     db.run("UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL", (db.now(), user_id))
 
 
+def trusted_proxies() -> set[str]:
+    """Addresses of reverse proxies we sit behind (e.g. the Cloudflare tunnel container), from AIRAWARE_TRUSTED_PROXIES."""
+    return {p.strip() for p in os.environ.get("AIRAWARE_TRUSTED_PROXIES", "").split(",") if p.strip()}
+
+
 def client_ip(request: Request) -> str:
-    return request.client.host if request.client else "?"
+    """The visitor's address. Behind a trusted proxy, the address it reports (CF-Connecting-IP, else the first
+    X-Forwarded-For entry); from anyone else those headers are ignored, so they cannot be forged to dodge limits."""
+    host = request.client.host if request.client else "?"
+    if host in trusted_proxies():
+        real = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if real:
+            return real[:64]
+    return host
+
+
+def via_https(request: Request) -> bool:
+    return request.url.scheme == "https" or (
+        request.client is not None and request.client.host in trusted_proxies() and request.headers.get("x-forwarded-proto") == "https")
 
 
 def current_user(request: Request) -> dict | None:

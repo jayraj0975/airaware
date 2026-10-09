@@ -214,11 +214,20 @@ def recheck_password(user: dict, password: str) -> bool:
     return auth.verify_password(password, user["pw_hash"])
 
 
+class Reauth(BaseModel):
+    password: str = Field(max_length=256)
+
+
 @router.post("/me/2fa/setup")
-def two_step_setup(user: dict = Depends(require_user)):
-    """Starts two-step sign-in: a new key for the authenticator app. It is not on until a code is confirmed."""
+def two_step_setup(body: Reauth, user: dict = Depends(require_user)):
+    """Starts two-step sign-in: a new key for the authenticator app. It is not on until a code is confirmed.
+
+    Needs the password: otherwise someone holding a stolen session could enrol their own authenticator and lock
+    the owner out."""
     if user["totp_enabled_at"]:
         raise HTTPException(409, "Two-step sign-in is already on.")
+    if not recheck_password(user, body.password):
+        raise HTTPException(403, "Your password is not right.")
     secret = auth.new_totp_secret()
     db.run("UPDATE users SET totp_secret = ?, totp_last_step = NULL WHERE id = ?", (secret, user["id"]))
     label = urllib.parse.quote(f"AirAware:{user['email']}")

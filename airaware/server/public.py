@@ -17,7 +17,7 @@ from airaware.data import CITIES, STATIONS
 from airaware.insights import best_hours, cigarettes, diwali_effect, dominant, station_agreement
 from airaware.model import AIRAWARE, PERSISTENCE, TEST_FROM, p_text
 from airaware.server import db
-from airaware.server.auth import current_user, require_user, visitor
+from airaware.server.auth import client_ip, current_user, require_user, visitor
 from airaware.server.core import upcoming
 
 router = APIRouter(prefix="/api")
@@ -106,7 +106,7 @@ def allow(client: str, per_minute: int = AREA_PER_MINUTE) -> bool:
 
 
 def limited(request: Request):
-    if not allow(request.client.host if request.client else "?"):
+    if not allow(client_ip(request)):
         raise HTTPException(429, "Too many lookups. Wait a minute and try again.")
 
 

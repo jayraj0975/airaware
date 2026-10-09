@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from airaware.server import account, admin, db, public
+from airaware.server.auth import via_https
 from airaware.server.core import State, refresher, run_job
 
 DIST = Path(os.environ.get("AIRAWARE_FRONTEND", Path(__file__).resolve().parents[2] / "frontend" / "dist"))
@@ -54,6 +55,8 @@ async def guard(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=()"
+    if via_https(request):  # browsers then refuse plain-HTTP connections to this site for a year
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     else:
