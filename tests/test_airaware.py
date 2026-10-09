@@ -92,3 +92,26 @@ def test_interval_and_dm_test():
     assert lo[0] == 92 and hi[0] == 108 and p[0] == 0 and 0.2 < p[1] < 0.3
     stat, pval = dm_test(np.ones(50), np.ones(50) * 2 + np.sin(np.arange(50)))
     assert stat < 0 and pval < 0.01
+
+
+def test_insights():
+    from airaware.insights import best_hours, cigarettes, diwali_effect, dominant, station_agreement
+
+    assert cigarettes(44) == 2
+    assert list(dominant(pd.Series([90.0, 20.0]), pd.Series([100.0, 300.0]))) == ["PM2.5", "PM10"]
+
+    days = pd.date_range("2025-09-01", "2025-11-10")
+    daily = pd.DataFrame({"date": days, "city": "Pune", "aqi": 100.0})
+    daily.loc[daily["date"] == "2025-10-21", "aqi"] = 250.0  # Diwali 2025
+    e = diwali_effect(daily).set_index("offset")
+    assert e.loc[0, "change"] == 150 and e.loc[1, "change"] == 0
+
+    t = pd.date_range("2025-01-01", periods=40)
+    wave = np.sin(np.arange(40)) * 50 + 150
+    st = pd.concat([pd.DataFrame({"city": "Pune", "station": n, "date": t, "aqi": a})
+                    for n, a in [("A", wave), ("B", wave + 5), ("C", wave - 5), ("Broken", np.random.default_rng(1).uniform(50, 250, 40))]])
+    verdicts = station_agreement(st).set_index("station")["verdict"]
+    assert verdicts["A"] == "Agrees with the city" and verdicts["Broken"] == "Out of step with the city"
+
+    profile = pd.DataFrame({"city": "Pune", "month": 1, "hour": range(24), "aqi": [10] * 6 + list(range(100, 118))})
+    assert list(best_hours(profile, "Pune", 1)["hour"]) == [6, 7, 8]  # night hours are skipped

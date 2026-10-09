@@ -20,9 +20,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 | Tab | What it shows |
 |---|---|
-| Right now | The latest measured day, then AirAware's forecast for today and tomorrow with an 80% range, the chance of a Poor-or-worse day and health advice. A chart joins the last six weeks of readings to the week-ahead forecast. **Fetch latest data** in the sidebar downloads new readings and a fresh weather forecast. |
+| Right now | The latest measured day, then AirAware's forecast for today and tomorrow with an 80% range, the chance of a Poor-or-worse day and health advice. **Plan your week**: the cleanest day coming up, the usually cleanest hours that month, and the last measured day in cigarettes. A chart joins the last six weeks of readings to the week-ahead forecast. **Fetch latest data** in the sidebar downloads new readings and a fresh weather forecast. |
 | Replay a day | Pick any evening from October 2025 on: what AirAware said, its range, and what actually happened. Sliders change tomorrow's temperature, humidity, rain and wind. **Why this forecast?** splits the forecast exactly into the push from each input. |
-| Stations | Map of every CPCB station in the city coloured by its latest AQI, and a table of their PM2.5 and PM10. |
+| Stations | Map of every CPCB station in the city coloured by its latest AQI, a table of their PM2.5 and PM10, and **Which stations can you trust?**: each station's correlation with and bias against the rest of the city over 90 days. |
+| Insights | Hour-by-month heatmap of when the air is cleanest, the Diwali effect, which particle sets the AQI each month, and a year of air in cigarettes. |
 | Explore the data | Daily AQI, the monthly pattern (clean monsoon, bad winter), share of days per AQI category, weather against AQI, data coverage per year. |
 | How good is it? | AirAware against baselines, a significance test, error 1-7 days ahead, range coverage, error by month, a category confusion table, which inputs matter, and a CSV of every test forecast. |
 
@@ -102,6 +103,20 @@ than the 80% promised.
 **Explanations.** AirAware is linear, so each forecast splits exactly into today's AQI, a baseline change, and one
 push per input (coefficient × standardised input). The app shows the largest pushes.
 
+### Insights (`airaware/insights.py`)
+
+- **Daily rhythm.** Hourly PM since January 2025, averaged by month and hour. In winter the 7-10 am rush is the worst
+  time of day and mid-afternoon the cleanest, as night-time inversions trap particles until the sun mixes the air.
+- **Diwali.** Each day's AQI minus the average of days 30 to 11 before Diwali. The AQI rises by about 145 points at the
+  peak in both cities, one to two days before Diwali (Mumbai: 2021, 2022, 2025; Pune: 2025 only). Some of the rise is the
+  normal post-monsoon worsening, so this is an upper bound on the festival's own effect.
+- **Which particle.** PM10 (dust) sets the AQI on most days; PM2.5 (smoke) takes over in winter, on almost every
+  December day in Pune.
+- **Station trust.** Over the last 90 days five Mumbai stations and one Pune station barely move with the rest of their
+  city (correlation below 0.6), more likely faulty or badly sited sensors than different air.
+- **Cigarettes.** Berkeley Earth's rule of thumb, 22 µg/m³ of PM2.5 for a day ≈ one cigarette: the past year's air was
+  about 670 cigarettes in Pune and 540 in Mumbai.
+
 What this shows:
 
 - AirAware beats "tomorrow = today" by about 7% on MAE and gets the AQI category right on 80% of days instead of 74%.
@@ -128,9 +143,11 @@ What this shows:
 airaware/aqi.py      CPCB breakpoints, sub-index, categories, health advice
 airaware/data.py     download, cleaning, daily city table, station table, weather history + forecast
 airaware/model.py    features, baselines, walk-forward evaluation, ranges, significance test, explanations, live forecast
+airaware/insights.py daily rhythm, Diwali effect, dominant particle, station agreement, cigarette equivalent
 app.py               Streamlit GUI
 data/daily.csv       the cleaned daily city table, including the week-ahead weather (raw downloads are cached in data/raw/)
 data/stations.csv    daily AQI per station with its position
+data/hourly_profile.csv  average PM by city, month and hour of day
 reports/metrics.md   latest evaluation
-tests/               AQI maths, cleaning rules, no-leakage checks, training cutoff, explanations, ranges, DM test
+tests/               AQI maths, cleaning rules, no-leakage checks, training cutoff, explanations, ranges, DM test, insights
 ```

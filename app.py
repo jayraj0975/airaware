@@ -7,7 +7,8 @@ import pandas as pd
 import streamlit as st
 
 from airaware.aqi import ADVICE, CATEGORIES, category
-from airaware.data import STATIONS, build, load, load_stations, save
+from airaware.data import STATIONS, build, load, load_hourly, load_stations, save
+from airaware.insights import best_hours, cigarettes, diwali_effect, dominant, station_agreement
 from airaware.model import AIRAWARE, FEATURES, PERSISTENCE, TEST_FROM, explain, forecast_now, train
 
 NAMES = {
@@ -34,6 +35,11 @@ def daily() -> pd.DataFrame:
 @st.cache_data
 def stations() -> pd.DataFrame:
     return load_stations()
+
+
+@st.cache_data
+def hourly() -> pd.DataFrame:
+    return load_hourly()
 
 
 @st.cache_resource(show_spinner="Training the forecast models (first load only, about 20 seconds)…")
@@ -78,7 +84,8 @@ if st.sidebar.button("Fetch latest data", help="Downloads new station readings a
             st.cache_resource.clear()
             st.rerun()
 
-live, replay, station_tab, explore, model = st.tabs(["Right now", "Replay a day", "Stations", "Explore the data", "How good is it?"])
+live, replay, station_tab, insight_tab, explore, model = st.tabs(
+    ["Right now", "Replay a day", "Stations", "Insights", "Explore the data", "How good is it?"])
 
 with live:
     mine = d[(d["city"] == city) & d["aqi"].notna()]
@@ -98,6 +105,22 @@ with live:
     worst = ahead.iloc[-1]
     st.info(f"**{day_label(worst['date'])}: {category(worst['forecast'])[0]}.** {ADVICE[category(worst['forecast'])[0]]}  \n"
             f"Chance of a Poor or worse day (AQI above 200): **{worst['p_poor']:.0%}**.")
+
+    st.subheader("Plan your week")
+    upcoming = fc[fc["date"] >= pd.Timestamp(date.today())]
+    upcoming = upcoming if not upcoming.empty else fc
+    best = upcoming.loc[upcoming["forecast"].idxmin()]
+    hours = best_hours(hourly(), city, best["date"].month)
+    p1, p2, p3 = st.columns(3)
+    p1.metric("Cleanest day coming up", day_label(best["date"]))
+    p1.caption(f"Forecast AQI {best['forecast']:.0f} on {best['date']:%a %d %b}")
+    p2.metric(f"Cleanest hours in {best['date']:%B}", ", ".join(f"{h % 12 or 12} {'am' if h < 12 else 'pm'}" for h in sorted(hours["hour"])),
+              help="From hourly station readings since January 2025 for this city and month. Particles build up in still "
+                   "morning air and thin out once the sun warms the ground and mixes the air.")
+    p2.caption("The usual daily pattern, waking hours only")
+    p3.metric(f"Breathing the air on {last['date']:%d %b}", f"≈ {cigarettes(last['pm25']):.1f} cigarettes",
+              help="Berkeley Earth's rule of thumb: a day at 22 µg/m³ of PM2.5 harms about as much as one cigarette.")
+    p3.caption(f"PM2.5 {last['pm25']:.0f} µg/m³ · {dominant(pd.Series([last['pm25']]), pd.Series([last['pm10']]))[0]} set the AQI that day")
 
     st.subheader("The last six weeks and the week ahead")
     hist = mine[mine["date"] > last["date"] - pd.Timedelta(days=42)]
@@ -178,6 +201,73 @@ with station_tab:
     if len(s) > 1:
         st.caption(f"Across the city, stations differ by up to {s['aqi'].max() - s['aqi'].min():.0f} AQI points this week: "
                    "the city AQI is an average, and your street may be cleaner or dirtier.")
+
+    st.subheader("Which stations can you trust?")
+    agree = station_agreement(stations())
+    agree = agree[agree["city"] == city].sort_values("correlation")
+    st.dataframe(agree[["station", "verdict", "correlation", "bias", "days"]].rename(columns={
+        "station": "Station", "verdict": "Verdict", "correlation": "Moves with the city (correlation)",
+        "bias": "Reads above the city by (AQI)", "days": "Days reporting"}).round(2), hide_index=True, use_container_width=True)
+    st.caption("Last 90 days, each station against the median of all stations in the city that day. A station that does not rise "
+               "and fall with its neighbours (correlation below 0.6) is more likely a faulty or badly placed sensor than "
+               "genuinely different air. The city average dilutes any one bad station.")
+
+with insight_tab:
+    st.subheader(f"When in the day is the air cleanest? {city}")
+    prof = hourly()[hourly()["city"] == city].copy()
+    prof["Month"] = pd.to_datetime(prof["month"], format="%m").dt.strftime("%b")
+    heat = alt.Chart(prof).mark_rect().encode(
+        x=alt.X("hour:O", title="Hour of day", axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("Month:N", sort=list(pd.date_range("2025-01-01", periods=12, freq="MS").strftime("%b")), title=None),
+        color=alt.Color("aqi:Q", title="AQI-equivalent", scale=alt.Scale(scheme="yelloworangered")),
+        tooltip=["Month", "hour", alt.Tooltip("aqi:Q", format=".0f"), alt.Tooltip("pm25:Q", format=".0f"), alt.Tooltip("pm10:Q", format=".0f")]
+    ).properties(height=360)
+    st.altair_chart(heat, use_container_width=True)
+    st.caption("Average of every station's hourly PM since January 2025, turned into an AQI-equivalent. In winter the morning "
+               "rush hours are the worst and mid-afternoon is the cleanest: cold, still night air traps particles near the ground "
+               "until the sun mixes them upward. CPCB's official AQI is a 24-hour value; this only shows the daily rhythm.")
+
+    st.subheader("How much does Diwali add?")
+    dw = diwali_effect(d)
+    if dw.empty:
+        st.write("Not enough data around any Diwali.")
+    else:
+        mean = dw.groupby(["city", "offset"])["change"].mean().reset_index()
+        years = dw.groupby("city")["year"].unique().map(lambda y: ", ".join(map(str, sorted(y))))
+        st.altair_chart(alt.Chart(mean).mark_line(point=True).encode(
+            x=alt.X("offset:Q", title="Days from Diwali", axis=alt.Axis(tickMinStep=1)), y=alt.Y("change:Q", title="AQI above the weeks before"),
+            color=alt.Color("city:N", title=None, legend=alt.Legend(orient="bottom")),
+            tooltip=["city", "offset", alt.Tooltip("change:Q", format="+.0f")]) + alt.Chart(pd.DataFrame({"x": [0]})).mark_rule(
+            strokeDash=[3, 3]).encode(x="x:Q"), use_container_width=True)
+        peak = mean.loc[mean.groupby("city")["change"].idxmax()]
+        st.markdown(" · ".join(f"**{r.city}**: peak **{r.change:+.0f}** AQI, {abs(r.offset)} day{'s' if abs(r.offset) != 1 else ''} "
+                               f"{'before' if r.offset < 0 else 'after'} Diwali (years: {years[r.city]})" if r.offset else
+                               f"**{r.city}**: peak **{r.change:+.0f}** AQI on Diwali (years: {years[r.city]})" for r in peak.itertuples()))
+        st.caption("Each day's AQI minus the average of days 30 to 11 before Diwali, averaged over the Diwalis with data. The festival "
+                   "runs over several days, so the peak can come before Diwali itself. Part of the rise is the normal post-monsoon "
+                   "worsening of the air, which is why the line does not fall all the way back to zero.")
+
+    left, right = st.columns(2)
+    ok_city = d[(d["city"] == city)].dropna(subset=["aqi", "pm25", "pm10"])
+    with left:
+        st.subheader("Which particle sets the AQI?")
+        dom = ok_city.assign(Particle=dominant(ok_city["pm25"], ok_city["pm10"]), month=ok_city["date"].dt.month)
+        share = dom.groupby("month")["Particle"].value_counts(normalize=True).rename("share").reset_index()
+        share["Month"] = pd.to_datetime(share["month"], format="%m").dt.strftime("%b")
+        st.altair_chart(alt.Chart(share).mark_bar().encode(
+            x=alt.X("Month:N", sort=list(pd.date_range("2025-01-01", periods=12, freq="MS").strftime("%b")), axis=alt.Axis(labelAngle=0), title=None),
+            y=alt.Y("share:Q", axis=alt.Axis(format="%"), title="Share of days"), color=alt.Color("Particle:N", legend=alt.Legend(orient="bottom")),
+            tooltip=["Month", "Particle", alt.Tooltip("share:Q", format=".0%")]), use_container_width=True)
+        st.caption("PM10 (coarse dust from roads and construction) sets the AQI on most days; fine PM2.5 (smoke, combustion) "
+                   "takes over more often in winter and around Diwali.")
+    with right:
+        st.subheader("Air quality in cigarettes")
+        year = d[d["date"] > d.dropna(subset=["pm25"])["date"].max() - pd.Timedelta(days=365)].dropna(subset=["pm25"])
+        cig = year.groupby("city")["pm25"].mean().map(cigarettes) * 365
+        for c_name, v in cig.items():
+            st.metric(f"{c_name}, past year", f"≈ {v:.0f} cigarettes", f"{v / 365:.1f} a day on average", delta_color="off")
+        st.caption("Average PM2.5 over the past year of readings, using Berkeley Earth's rule of thumb (22 µg/m³ for a day ≈ one "
+                   "cigarette). A rough comparison of harm, not a medical measure.")
 
 with explore:
     ok = d.dropna(subset=["aqi"])

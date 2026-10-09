@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw"
 DAILY_CSV = ROOT / "data" / "daily.csv"
 STATIONS_CSV = ROOT / "data" / "stations.csv"
+HOURLY_CSV = ROOT / "data" / "hourly_profile.csv"
 COORDS = RAW / "coords.json"
 TZ = "Asia/Kolkata"
 START = "2020-11-14"  # first full day of the IITM stations
@@ -133,15 +134,28 @@ def station_daily(hourly: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
-def city_air(city: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def hourly_profile(hourly: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Average PM by month and hour of day across a city's stations, as an hourly AQI-equivalent.
+
+    CPCB's AQI is a 24-hour measure; this only shows when in the day the air is usually cleaner or dirtier.
+    """
+    h = pd.concat(hourly.values())
+    h = h[h.index >= "2025-01-01"]  # the dense years; older data is too patchy to average by hour
+    g = h.groupby([h.index.month.rename("month"), h.index.hour.rename("hour")])[["pm25", "pm10"]].mean().reset_index()
+    g["aqi"] = np.fmax(g["pm25"].map(lambda c: sub_index("pm2_5", c)), g["pm10"].map(lambda c: sub_index("pm10", c)))
+    return g
+
+
+def city_air(city: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """City value = mean over the stations that reported that day (CPCB's city AQI is the station average).
 
-    Also returns every station-day with the station's position, for the map.
+    Also returns every station-day with the station's position, for the map, and the city's hourly profile.
     """
     names = {}
     for loc, name in STATIONS[city].items():
         names.setdefault(name, []).append(station_readings(loc))
-    days = {name: station_daily(clean_hourly(pd.concat(raws).drop_duplicates(["datetime", "parameter"]))) for name, raws in names.items()}
+    hourly = {name: clean_hourly(pd.concat(raws).drop_duplicates(["datetime", "parameter"])) for name, raws in names.items()}
+    days = {name: station_daily(h) for name, h in hourly.items()}
     stacked = pd.concat(days, names=["station", "date"])
     g = stacked.groupby("date")
     out = g[["pm25", "pm10", "aqi"]].mean()
@@ -152,7 +166,7 @@ def city_air(city: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     st = stacked.dropna(subset=["aqi"]).reset_index()
     st.insert(0, "city", city)
     st["lat"], st["lon"] = st["station"].map(lambda n: where[n][0]), st["station"].map(lambda n: where[n][1])
-    return out[out["stations"] >= 2], st
+    return out[out["stations"] >= 2], st, hourly_profile(hourly).assign(city=city)
 
 
 # ---------- weather ----------
@@ -191,21 +205,23 @@ def weather_daily(h: pd.DataFrame) -> pd.DataFrame:
 def build() -> tuple[pd.DataFrame, pd.DataFrame]:
     """One row per city-day from START to six days ahead (future rows carry the weather forecast only)."""
     end = str(date.today() + timedelta(days=6))
-    frames, stations = [], []
+    frames, stations, profiles = [], [], []
     for city in CITIES:
-        air, st = city_air(city)
+        air, st, profile = city_air(city)
+        profiles.append(profile)
         d = weather_daily(city_weather(city)).join(air, how="left").loc[START:end]  # keep weather-only days: lags must see the gaps
         d.insert(0, "city", city)
         frames.append(d)
         stations.append(st)
     out = pd.concat(frames)
     out.index.name = "date"
-    return out.reset_index(), pd.concat(stations)
+    return out.reset_index(), pd.concat(stations), pd.concat(profiles)
 
 
-def save(daily: pd.DataFrame, stations: pd.DataFrame) -> None:
+def save(daily: pd.DataFrame, stations: pd.DataFrame, profile: pd.DataFrame) -> None:
     daily.to_csv(DAILY_CSV, index=False, float_format="%.2f")
     stations[["city", "station", "date", "lat", "lon", "pm25", "pm10", "aqi"]].to_csv(STATIONS_CSV, index=False, float_format="%.2f")
+    profile[["city", "month", "hour", "pm25", "pm10", "aqi"]].to_csv(HOURLY_CSV, index=False, float_format="%.2f")
 
 
 def load() -> pd.DataFrame:
@@ -216,9 +232,13 @@ def load_stations() -> pd.DataFrame:
     return pd.read_csv(STATIONS_CSV, parse_dates=["date"])
 
 
+def load_hourly() -> pd.DataFrame:
+    return pd.read_csv(HOURLY_CSV)
+
+
 if __name__ == "__main__":
-    df, st = build()
-    save(df, st)
+    df, st, profile = build()
+    save(df, st, profile)
     ok = df.dropna(subset=["aqi"])
     print(f"{len(ok)} city-days with AQI ({df['date'].min():%Y-%m-%d} to {df['date'].max():%Y-%m-%d}) -> {DAILY_CSV}")
     print(ok.groupby("city")[["aqi", "pm25", "pm10", "stations"]].describe().T.round(1))
