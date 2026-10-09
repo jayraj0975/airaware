@@ -24,6 +24,8 @@ from airaware.aqi import sub_index
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw"
 DAILY_CSV = ROOT / "data" / "daily.csv"
+STATIONS_CSV = ROOT / "data" / "stations.csv"
+COORDS = RAW / "coords.json"
 TZ = "Asia/Kolkata"
 START = "2020-11-14"  # first full day of the IITM stations
 
@@ -84,13 +86,25 @@ def station_readings(location: int) -> pd.DataFrame:
     cache = RAW / f"{location}.csv.gz"
     old = pd.read_csv(cache) if cache.exists() else pd.DataFrame(columns=["datetime", "parameter", "value"])
     last = old["datetime"].str[:10].max() if len(old) else "0000"
-    keys = [k for k in _keys(location) if k[-15:-7] >= last.replace("-", "")]  # ...-YYYYMMDD.csv.gz
+    all_keys = _keys(location)
+    _save_coords(location, all_keys)
+    keys = [k for k in all_keys if k[-15:-7] >= last.replace("-", "")]  # ...-YYYYMMDD.csv.gz
     with ThreadPoolExecutor(32) as ex:
         new = pd.DataFrame([row for rows in ex.map(_readings, keys) for row in rows], columns=["datetime", "parameter", "value"])
     df = pd.concat([old, new]).drop_duplicates(["datetime", "parameter"], keep="last").sort_values("datetime")
     RAW.mkdir(parents=True, exist_ok=True)
     df.to_csv(cache, index=False)
     return df
+
+
+def _save_coords(location: int, keys: list[str]) -> None:
+    coords = json.loads(COORDS.read_text()) if COORDS.exists() else {}
+    if str(location) in coords or not keys:
+        return
+    row = next(csv.DictReader(io.StringIO(gzip.decompress(_url(f"{ARCHIVE}/{keys[-1]}")).decode())))
+    coords[str(location)] = [float(row["lat"]), float(row["lon"])]
+    RAW.mkdir(parents=True, exist_ok=True)
+    COORDS.write_text(json.dumps(coords))
 
 
 def clean_hourly(raw: pd.DataFrame) -> pd.DataFrame:
@@ -119,8 +133,11 @@ def station_daily(hourly: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
-def city_air(city: str) -> pd.DataFrame:
-    """City value = mean over the stations that reported that day (CPCB's city AQI is the station average)."""
+def city_air(city: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """City value = mean over the stations that reported that day (CPCB's city AQI is the station average).
+
+    Also returns every station-day with the station's position, for the map.
+    """
     names = {}
     for loc, name in STATIONS[city].items():
         names.setdefault(name, []).append(station_readings(loc))
@@ -129,7 +146,13 @@ def city_air(city: str) -> pd.DataFrame:
     g = stacked.groupby("date")
     out = g[["pm25", "pm10", "aqi"]].mean()
     out["stations"] = g["aqi"].count()
-    return out[out["stations"] >= 2]
+
+    coords = json.loads(COORDS.read_text())
+    where = {name: coords[str(loc)] for loc, name in STATIONS[city].items() if str(loc) in coords}  # newest id wins
+    st = stacked.dropna(subset=["aqi"]).reset_index()
+    st.insert(0, "city", city)
+    st["lat"], st["lon"] = st["station"].map(lambda n: where[n][0]), st["station"].map(lambda n: where[n][1])
+    return out[out["stations"] >= 2], st
 
 
 # ---------- weather ----------
@@ -141,10 +164,16 @@ def weather_hourly(city: str, start: str | None = None, end: str | None = None, 
     if past_days is None:
         url, q = WX_HISTORY, q | {"start_date": start, "end_date": end}
     else:
-        url, q = WX_FORECAST, q | {"past_days": past_days, "forecast_days": 2}
+        url, q = WX_FORECAST, q | {"past_days": past_days, "forecast_days": 7}
     h = pd.DataFrame(json.loads(_url(f"{url}?{urllib.parse.urlencode(q)}"))["hourly"])
     h["time"] = pd.to_datetime(h["time"])
     return h.set_index("time")
+
+
+def city_weather(city: str) -> pd.DataFrame:
+    """ERA5 history; the forecast model fills the days ERA5 has not reached yet and the week ahead."""
+    history = weather_hourly(city, START, str(date.today()))
+    return history.combine_first(weather_hourly(city, past_days=10))
 
 
 def weather_daily(h: pd.DataFrame) -> pd.DataFrame:
@@ -159,28 +188,37 @@ def weather_daily(h: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-def build() -> pd.DataFrame:
-    # ERA5 reaches the archive about five days late; stop a week back so every row is complete.
-    end = str(date.today() - timedelta(days=7))
-    frames = []
+def build() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """One row per city-day from START to six days ahead (future rows carry the weather forecast only)."""
+    end = str(date.today() + timedelta(days=6))
+    frames, stations = [], []
     for city in CITIES:
-        air = city_air(city)
-        wx = weather_daily(weather_hourly(city, START, end))
-        d = wx.join(air, how="left").loc[START:end]  # keep weather-only days: lags must see the gaps
+        air, st = city_air(city)
+        d = weather_daily(city_weather(city)).join(air, how="left").loc[START:end]  # keep weather-only days: lags must see the gaps
         d.insert(0, "city", city)
         frames.append(d)
+        stations.append(st)
     out = pd.concat(frames)
     out.index.name = "date"
-    return out.reset_index()
+    return out.reset_index(), pd.concat(stations)
+
+
+def save(daily: pd.DataFrame, stations: pd.DataFrame) -> None:
+    daily.to_csv(DAILY_CSV, index=False, float_format="%.2f")
+    stations[["city", "station", "date", "lat", "lon", "pm25", "pm10", "aqi"]].to_csv(STATIONS_CSV, index=False, float_format="%.2f")
 
 
 def load() -> pd.DataFrame:
     return pd.read_csv(DAILY_CSV, parse_dates=["date"])
 
 
+def load_stations() -> pd.DataFrame:
+    return pd.read_csv(STATIONS_CSV, parse_dates=["date"])
+
+
 if __name__ == "__main__":
-    df = build()
-    df.to_csv(DAILY_CSV, index=False, float_format="%.2f")
+    df, st = build()
+    save(df, st)
     ok = df.dropna(subset=["aqi"])
     print(f"{len(ok)} city-days with AQI ({df['date'].min():%Y-%m-%d} to {df['date'].max():%Y-%m-%d}) -> {DAILY_CSV}")
     print(ok.groupby("city")[["aqi", "pm25", "pm10", "stations"]].describe().T.round(1))

@@ -5,7 +5,7 @@ import pandas as pd
 
 from airaware.aqi import category, sub_index
 from airaware.data import clean_hourly, station_daily
-from airaware.model import FEATURES, category_index, features
+from airaware.model import FEATURES, ChangeModel, category_index, dm_test, explain, features, interval, train_rows
 
 
 def test_sub_index_matches_cpcb_breakpoints():
@@ -59,3 +59,36 @@ def test_features_use_nothing_from_the_target_day():
     d = pd.Timestamp("2024-01-15")
     assert a.loc[d, "target"] == 50 + 15 * 5 and b.loc[d, "target"] == 999
     pd.testing.assert_series_equal(a.loc[d, FEATURES], b.loc[d, FEATURES])
+
+
+def _toy(n=60):
+    days = pd.date_range("2024-01-01", periods=n)
+    rng = np.random.default_rng(0)
+    return pd.DataFrame({"date": days, "city": "Pune", "aqi": 100 + rng.normal(0, 20, n), "pm25": 30.0, "pm10": 60.0,
+                         "temp": 25 + rng.normal(0, 2, n), "humidity": 60.0, "rain": 0.0, "wind": 8.0, "wind_u": 1.0,
+                         "wind_v": 1.0, "pressure": 1010.0, "blh": 600 + rng.normal(0, 50, n)})
+
+
+def test_horizon_features_and_training_cutoff():
+    f = features(_toy(), h=3).set_index("date", drop=False)
+    d = pd.Timestamp("2024-01-10")
+    assert f.loc[d, "target"] == f.loc[d + pd.Timedelta(days=3), "aqi"]
+    assert f.loc[d, "temp_next"] == f.loc[d + pd.Timedelta(days=3), "temp"]
+    start = pd.Timestamp("2024-02-01")
+    tr = train_rows(f.reset_index(drop=True), start, 3)
+    assert (tr["date"] + pd.Timedelta(days=3)).max() == start  # every training target was measured by the forecast
+
+
+def test_explain_adds_up_to_the_forecast():
+    f = features(_toy()).dropna(subset=["target"])
+    m = ChangeModel().fit(f, f["target"])
+    x = f.iloc[[20]]
+    total = x["aqi"].iloc[0] + m.model_.named_steps["ridge"].intercept_ + explain(m, x).sum()
+    assert abs(total - m.predict(x)[0]) < 1e-9
+
+
+def test_interval_and_dm_test():
+    lo, hi, p = interval(np.array([100.0, 195.0]), np.arange(-10, 11))
+    assert lo[0] == 92 and hi[0] == 108 and p[0] == 0 and 0.2 < p[1] < 0.3
+    stat, pval = dm_test(np.ones(50), np.ones(50) * 2 + np.sin(np.arange(50)))
+    assert stat < 0 and pval < 0.01

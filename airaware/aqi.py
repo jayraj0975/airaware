@@ -39,3 +39,13 @@ def category(value: float) -> tuple[str, str]:
         if value <= upper:
             return name, colour
     return CATEGORIES[-1][1:]
+
+
+ADVICE = {  # plain-language health advice per category, following the spirit of CPCB's health statements
+    "Good": "Air is clean. A good day to be outdoors.",
+    "Satisfactory": "Fine for almost everyone. People who are very sensitive may notice slight breathing discomfort.",
+    "Moderate": "Children, older adults and people with asthma, lung or heart disease should cut down long or hard outdoor exercise.",
+    "Poor": "Most people may feel uncomfortable after long exposure. Sensitive groups should avoid outdoor exercise; wear a mask in traffic.",
+    "Very Poor": "Everyone should limit time outdoors. Sensitive groups should stay indoors and keep activity light.",
+    "Severe": "Avoid outdoor activity, keep windows shut, and get medical help for any breathing trouble.",
+}
