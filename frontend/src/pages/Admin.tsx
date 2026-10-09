@@ -74,12 +74,27 @@ function UsersTab() {
   const [q, setQ] = useState('')
   const users = useLoad(() => api.get<AdminUser[]>(`/api/admin/users?q=${encodeURIComponent(q)}`), [q])
   const [err, setErr] = useState('')
+  const [link, setLink] = useState<{ who: string; url: string } | null>(null)
+  const resetLink = async (u: AdminUser) => {
+    try {
+      const r = await api.post<{ path: string }>(`/api/admin/users/${u.id}/reset-link`)
+      setLink({ who: u.email, url: location.origin + r.path })
+    } catch (e) { setErr((e as Error).message) }
+  }
   const change = async (u: AdminUser, body: object) => {
     try { await api.patch(`/api/admin/users/${u.id}`, body); users.reload(); setErr('') } catch (e) { setErr((e as Error).message) }
   }
   return (
     <Card title="Users" action={<input className="search" placeholder="Search name or email" value={q} onChange={(e) => setQ(e.target.value)} />}>
       {err && <div className="error">{err}</div>}
+      {link && (
+        <div className="reset-link">
+          <b>One-time reset link for {link.who}</b>, valid 24 hours. Send it to them privately; it stops working once used.
+          <div className="row-form"><input readOnly value={link.url} onFocus={(e) => e.target.select()} />
+            <button className="btn small" onClick={() => navigator.clipboard?.writeText(link.url)}>Copy</button>
+            <button className="ghost small" onClick={() => setLink(null)}>Done</button></div>
+        </div>
+      )}
       {!users.data ? <Spinner /> : (
         <div className="table-wrap"><table>
           <thead><tr><th>User</th><th>Role</th><th>City</th><th className="num">Places</th><th className="num">Alerts</th><th className="num">Reports</th><th>Joined</th><th>Last sign-in</th><th /></tr></thead>
@@ -91,6 +106,7 @@ function UsersTab() {
               <td>{shortDate(u.created_at)}</td><td>{u.last_login ? dateTime(u.last_login) : '–'}</td>
               <td className="actions">{u.id !== me?.id && <>
                 <button className="link" onClick={() => change(u, { role: u.role === 'admin' ? 'user' : 'admin' })}>{u.role === 'admin' ? 'Make user' : 'Make admin'}</button>
+                <button className="link" onClick={() => resetLink(u)}>Reset link</button>
                 <button className="link danger" onClick={() => change(u, { disabled: !u.disabled })}>{u.disabled ? 'Enable' : 'Disable'}</button>
               </>}</td>
             </tr>

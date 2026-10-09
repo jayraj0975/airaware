@@ -46,12 +46,13 @@ DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as
 - A **health profile** (asthma, heart disease, children, over 65, pregnancy, outdoor work): advice and warning levels
   across the site adapt to it, warning sensitive groups one category earlier.
 - **Report pollution** (garbage burning, construction dust, factory smoke…) on the map; shown publicly once approved.
-- Change password (signs out other devices), delete the account and its data.
+- Change password (signs out other devices), reset a forgotten one, delete the account and its data.
 
 **Admin console**
 - Overview: users, active users, places, alerts, warnings sent, reports waiting, forecasts logged and scored,
   model error, data freshness per city, sign-ups over 30 days.
-- Users: search, promote or demote admins, disable accounts (ends their sessions).
+- Users: search, promote or demote admins, disable accounts (ends their sessions), issue a one-time password-reset
+  link to pass to someone who cannot get email.
 - Reports: moderation queue on a map, approve or reject.
 - Data & jobs: every startup, scheduled and manual rebuild with its result; **Rebuild data now**; the health of each
   station (days reporting, agreement with its city).
@@ -85,6 +86,9 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
   attempts (10 per 15 minutes per email, 20 per IPv4 address or IPv6 /64), sign-ups (5 an hour per network). Area
   lookups are limited per visitor (30 a minute) and calls to outside services are rate-capped.
 - Admins are made only from the server command line, never by signing up with a particular email.
+- Password resets: one-time links (an hour by email, a day from an admin), stored only as hashes, voided by a newer
+  link, and carried after `#` so they never reach server logs. "Forgot password" answers the same whether or not the
+  email has an account. Emailed links use AIRAWARE_PUBLIC_URL, never the request's Host header.
 - Security headers (CSP, frame denial, nosniff).
 - Per-user ownership checks on every place, alert and notification. The container runs as a non-root user.
 
@@ -108,14 +112,15 @@ grants admin on sign-up because it does not verify email ownership):
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
 cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
-.venv/bin/python -m pytest                                         # 28 tests
+.venv/bin/python -m pytest                                         # 30 tests
 ```
 
 | Setting | Default | |
 |---|---|---|
 | `OPENAQ_API_KEY` | none | live hourly CPCB readings (free key from explore.openaq.org) |
 | `AIRAWARE_SECURE_COOKIES` | 0 | set to 1 when served over HTTPS |
-| `AIRAWARE_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | none | email alerts |
+| `AIRAWARE_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | none | email alerts and password-reset emails |
+| `AIRAWARE_PUBLIC_URL` | none | the site's address, used in emailed links (e.g. https://airaware.example) |
 | `AIRAWARE_DB` | data/airaware.db | SQLite file |
 | `AIRAWARE_REBUILD_HOURS` | 6 | how often to download and retrain |
 

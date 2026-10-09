@@ -167,6 +167,7 @@ tr.off td { opacity: .5; }
 .tabs button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .tabs.mini button { padding: 4px 10px; font-size: .82rem; text-transform: capitalize; }
 .search { width: 260px; }
+.reset-link { background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; font-size: .9rem; display: grid; gap: 8px; }
 .moderation { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; max-height: 420px; overflow: auto; }
 .moderation li { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; } .moderation p { margin: 6px 0; }
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from airaware.data import STATIONS
 from airaware.insights import station_agreement
 from airaware.server import db
-from airaware.server.auth import client_ip, end_all_sessions, require_admin
+from airaware.server.auth import client_ip, end_all_sessions, new_reset_token, require_admin
 from airaware.server.core import _job_lock, rebuild, run_job
 from airaware.server.public import clean, records, state
 
@@ -88,6 +88,17 @@ def change_user(uid: int, body: UserChange, request: Request, admin: dict = Depe
             end_all_sessions(uid)
         db.audit("admin.disable" if body.disabled else "admin.enable", admin["id"], f"user {uid} ({u['email']})", client_ip(request))
     return {"ok": True}
+
+
+@router.post("/users/{uid}/reset-link")
+def reset_link(uid: int, request: Request, admin: dict = Depends(require_admin)):
+    """A one-time reset link (valid 24 hours) for the admin to pass to the user, for when email is not set up."""
+    u = db.one("SELECT id, email FROM users WHERE id = ?", (uid,))
+    if not u:
+        raise HTTPException(404, "No such user.")
+    token = new_reset_token(uid, hours=24, created_by=admin["id"])
+    db.audit("admin.reset_link", admin["id"], f"user {uid} ({u['email']})", client_ip(request))
+    return {"path": f"/reset#token={token}", "expires_hours": 24}  # after "#": never sent to the server, so never in its logs
 
 
 @router.get("/reports")

@@ -285,3 +285,34 @@ def test_personal_responses_are_marked_for_the_service_worker(app):
     signup(c, "private@example.com")
     assert c.get("/api/overview?city=Pune").headers["x-airaware-personal"] == "1"
     assert c.get("/api/area?lat=18.52&lon=73.85").headers["x-airaware-personal"] == "1"
+
+
+def test_password_reset_by_admin_link(app):
+    c = client(app)
+    signup(c, "forgetful@example.com", password="old-password-1")
+    assert client(app).post("/api/auth/forgot", json={"email": "forgetful@example.com"}, headers=H).json()["ok"]
+    assert client(app).post("/api/auth/forgot", json={"email": "nobody-here@example.com"}, headers=H).json()["ok"]  # same answer
+
+    boss = client(app)
+    signup(boss, "resetter@example.com")
+    manage.main(["make-admin", "resetter@example.com"])
+    uid = db.one("SELECT id FROM users WHERE email = ?", ("forgetful@example.com",))["id"]
+    assert c.post(f"/api/admin/users/{uid}/reset-link", headers=H).status_code == 403
+    path = boss.post(f"/api/admin/users/{uid}/reset-link", headers=H).json()["path"]
+    token = path.split("token=")[1]
+    assert not db.one("SELECT 1 FROM password_resets WHERE token_hash = ?", (token,))  # only the hash is stored
+
+    assert client(app).post("/api/auth/reset", json={"token": token, "password": "short"}, headers=H).status_code == 422
+    assert client(app).post("/api/auth/reset", json={"token": token, "password": "new-password-2"}, headers=H).json() == {"ok": True}
+    assert client(app).post("/api/auth/reset", json={"token": token, "password": "new-password-3"}, headers=H).status_code == 400  # single use
+    assert c.get("/api/auth/me").json()["user"] is None  # old sessions ended
+    assert client(app).post("/api/auth/login", json={"email": "forgetful@example.com", "password": "new-password-2"}, headers=H).status_code == 200
+
+
+def test_reset_tokens_expire_and_are_replaced():
+    uid = db.run("INSERT INTO users (email, name, pw_hash, created_at) VALUES ('exp@example.com', 'E', 'x', ?)", (db.now(),))
+    first = auth.new_reset_token(uid, hours=1)
+    second = auth.new_reset_token(uid, hours=1)
+    assert auth.use_reset_token(first) is None and auth.use_reset_token(second) == uid  # a new link voids the old one
+    old = auth.new_reset_token(uid, hours=-1)
+    assert auth.use_reset_token(old) is None

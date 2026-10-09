@@ -133,3 +133,22 @@ def allow_login(ip_key: str, email: str) -> bool:
     Atomic check-and-record (see db.take), so parallel requests cannot slip past the limit.
     """
     return db.take("login.ip", ip_key, LOGIN_LIMIT * 2, LOGIN_WINDOW_MINUTES) and db.take("login.email", email, LOGIN_LIMIT, LOGIN_WINDOW_MINUTES)
+
+
+def new_reset_token(user_id: int, hours: int, created_by: int | None = None) -> str:
+    """A one-time password-reset token; only its hash is stored. Earlier unused tokens for the user stop working."""
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(timespec="seconds")
+    db.run("UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL", (db.now(), user_id))
+    db.run("INSERT INTO password_resets (token_hash, user_id, expires_at, created_by) VALUES (?, ?, ?, ?)",
+           (_hash(token), user_id, expires, created_by))
+    return token
+
+
+def use_reset_token(token: str) -> int | None:
+    """Marks a valid token used and returns its user id; None if it is unknown, used or expired. The UPDATE is the
+    check, so two requests with the same token cannot both succeed."""
+    with db.connect() as con:
+        row = con.execute("""UPDATE password_resets SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
+                             RETURNING user_id""", (db.now(), _hash(token), db.now())).fetchone()
+    return row["user_id"] if row else None

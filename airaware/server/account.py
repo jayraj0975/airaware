@@ -1,5 +1,6 @@
 """Sign-up, sign-in and everything a signed-in user owns: profile, saved places, alerts and notifications."""
 
+import os
 import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -9,7 +10,7 @@ from airaware.aqi import HEALTH_GROUPS
 from airaware.data import CITIES
 from airaware.server import auth, db
 from airaware.server.auth import client_ip, require_user
-from airaware.server.core import check_alerts, upcoming
+from airaware.server.core import check_alerts, send_email, upcoming
 from airaware.server.public import forecast_rows, state
 
 router = APIRouter(prefix="/api")
@@ -26,6 +27,15 @@ class SignUp(BaseModel):
 
 class SignIn(BaseModel):
     email: str = Field(max_length=320)
+    password: str = Field(max_length=256)
+
+
+class Forgot(BaseModel):
+    email: str = Field(max_length=320)
+
+
+class Reset(BaseModel):
+    token: str = Field(max_length=200)
     password: str = Field(max_length=256)
 
 
@@ -97,6 +107,40 @@ def login(body: SignIn, request: Request, response: Response):
 @router.post("/auth/logout")
 def logout(request: Request, response: Response):
     auth.end_session(request, response)
+    return {"ok": True}
+
+
+@router.post("/auth/forgot")
+def forgot(body: Forgot, request: Request):
+    """Emails a reset link if the account exists and email is set up. The answer is always the same, so it never
+    reveals which emails have accounts. Links point at AIRAWARE_PUBLIC_URL, never at the request's Host header."""
+    email = body.email.strip().lower()
+    ip = auth.visitor(client_ip(request))
+    sent_note = {"ok": True, "detail": "If that email has an account, a reset link is on its way. No email? Ask an admin for a reset link."}
+    if not (db.take("forgot.ip", ip, 5, 60) and db.take("forgot.email", email, 3, 60)):
+        return sent_note
+    u = db.one("SELECT id, name, email FROM users WHERE email = ? AND disabled = 0", (email,))
+    base = os.environ.get("AIRAWARE_PUBLIC_URL", "").rstrip("/")
+    if u and base and os.environ.get("AIRAWARE_SMTP_HOST"):
+        token = auth.new_reset_token(u["id"], hours=1)
+        send_email(u["email"], "Reset your AirAware password",
+                   f"Hi {u['name']},\n\nTo choose a new password, open this link within an hour:\n{base}/reset#token={token}\n\n"
+                   "If you did not ask for this, ignore this email; your password has not changed.\n\n— AirAware")
+        db.audit("user.reset_requested", u["id"], "", ip)
+    return sent_note
+
+
+@router.post("/auth/reset")
+def reset(body: Reset, request: Request):
+    auth.check_new_password(body.password)
+    if not db.take("reset.ip", auth.visitor(client_ip(request)), 10, 60):
+        raise HTTPException(429, "Too many attempts. Try again in an hour.")
+    uid = auth.use_reset_token(body.token)
+    if uid is None:
+        raise HTTPException(400, "This reset link is invalid, already used or expired. Ask for a new one.")
+    db.run("UPDATE users SET pw_hash = ? WHERE id = ?", (auth.hash_password(body.password), uid))
+    auth.end_all_sessions(uid)
+    db.audit("user.password_reset", uid, "", client_ip(request))
     return {"ok": True}
 
 

@@ -14,6 +14,7 @@ const Auth = lazy(() => import('./pages/Auth'))
 const Compare = lazy(() => import('./pages/Compare'))
 const Explore = lazy(() => import('./pages/Explore'))
 const Me = lazy(() => import('./pages/Me'))
+const Reset = lazy(() => import('./pages/Reset'))
 const Science = lazy(() => import('./pages/Science'))
 const TrackRecord = lazy(() => import('./pages/TrackRecord'))
 
@@ -36,6 +37,8 @@ const router = createBrowserRouter([{
     { path: '/about', element: <About /> },
     { path: '/login', element: <Auth mode="login" /> },
     { path: '/signup', element: <Auth mode="signup" /> },
+    { path: '/forgot', element: <Reset mode="forgot" /> },
+    { path: '/reset', element: <Reset mode="reset" /> },
     { path: '/me', element: <Guard><Me /></Guard> },
     { path: '/admin', element: <Guard admin><Admin /></Guard> },
     { path: '*', element: <div className="page narrow"><h1>Page not found</h1><p><a href="/">Back to today's air</a></p></div> },

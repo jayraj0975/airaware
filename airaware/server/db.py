@@ -83,6 +83,13 @@ CREATE TABLE IF NOT EXISTS audit (
     at TEXT NOT NULL, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', ip TEXT
 );
+CREATE TABLE IF NOT EXISTS password_resets (
+    token_hash TEXT PRIMARY KEY,              -- sha256 of the link's token; the token itself is never stored
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL   -- the admin who made it, or NULL for self-service
+);
 CREATE TABLE IF NOT EXISTS throttle (       -- attempts counted for rate limits (see take())
     action TEXT NOT NULL, key TEXT NOT NULL, at TEXT NOT NULL
 );
