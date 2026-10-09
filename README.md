@@ -98,7 +98,7 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
   lookups are limited per visitor (30 a minute) and calls to outside services are rate-capped.
 - Admins are made only from the server command line, never by signing up with a particular email, and must turn on
   two-step sign-in (TOTP authenticator codes, replay-protected) before the admin console opens.
-- Self-pentest: `security/attack.py` runs 55 attacks (CSRF, CORS, IDOR, admin access, SQL injection, XSS storage,
+- Self-pentest: `security/attack.py` runs 56 attacks (CSRF, CORS, IDOR, admin access, SQL injection, XSS storage, Host-header injection,
   NaN/huge inputs, 64 kB body cap, path traversal, brute force, reset-token guessing, rate limits, session replay)
   and runs in CI with pip-audit and npm audit on every push.
 - Behind the tunnel, a visitor's real address is taken only from the trusted proxy, so limits work per visitor and
@@ -141,7 +141,7 @@ grants admin on sign-up because it does not verify email ownership):
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
 cd frontend && npm install && npm run dev                          # http://localhost:5173, proxies /api
-.venv/bin/python -m pytest                                         # 40 backend tests
+.venv/bin/python -m pytest                                         # 42 backend tests
 cd frontend && npm run build && npx playwright test                # end-to-end, desktop and phone
 ```
 
