@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
 import type { Category, ForecastDay, Personal } from '../api'
 import { dayName, fmt } from '../util'
 
@@ -154,4 +154,23 @@ export function ConfirmDialog({ title, children, ok, onConfirm, onClose }: { tit
         <button className="btn small danger-btn" onClick={async () => { await onConfirm(); onClose() }}>{ok}</button></div>
     </Dialog>
   )
+}
+
+/** If a page crashes in the browser, show a friendly way out instead of a blank screen. */
+export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error('AirAware page error', error, info.componentStack) }
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div className="page narrow">
+        <div className="card oops">
+          <h1>Something went wrong on this page</h1>
+          <p>Sorry about that. It is usually a hiccup: reloading fixes it. Your account and data are safe.</p>
+          <div className="actions"><button className="btn" onClick={() => location.reload()}>Reload</button><a className="ghost" href="/">Go to today's air</a></div>
+        </div>
+      </div>
+    )
+  }
 }

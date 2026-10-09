@@ -477,7 +477,10 @@ def test_rebuild_clock_survives_restarts(app):
 def test_link_previews_use_a_safe_absolute_origin(app, monkeypatch, tmp_path):
     (tmp_path / "index.html").write_text('<meta property="og:image" content="__ORIGIN__/og.png">')
     monkeypatch.setattr(server, "DIST", tmp_path)
-    assert 'content="http://airaware.example/og.png"' in app.get("/", headers={"Host": "airaware.example"}).text
-    assert 'content="/og.png"' in app.get("/", headers={"Host": 'evil"><script>'}).text  # not a hostname: left relative
+    r = app.get("/", headers={"Host": "evil.example"})
+    assert 'content="/og.png"' in r.text and "evil" not in r.text  # the Host header is never used
+    assert r.headers["cache-control"] == "no-cache, private"
     monkeypatch.setenv("AIRAWARE_PUBLIC_URL", "https://airaware.in/")
-    assert 'content="https://airaware.in/og.png"' in app.get("/me").text
+    assert 'content="https://airaware.in/og.png"' in app.get("/me", headers={"Host": "evil.example"}).text
+    monkeypatch.setenv("AIRAWARE_PUBLIC_URL", 'https://x.in/"><script>')
+    assert "<script>" not in app.get("/").text

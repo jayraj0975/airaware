@@ -129,7 +129,7 @@ def status(request: Request):
                                  "stations": len(set(STATIONS[c].values()))} for c, ll in CITIES.items()},
                   "trained_at": trained, "live_readings": not s.live.empty, "live_at": s.live_at,
                   "live_key": bool(os.environ.get("OPENAQ_API_KEY")),
-                  "categories": [{"upper": None if math.isinf(u) else u, "name": n, "colour": c} for u, n, c in CATEGORIES],
+                  "categories": [{"upper": None if math.isinf(u) else u, "name": n, "colour": c, "advice": ADVICE[n]} for u, n, c in CATEGORIES],
                   "health_groups": HEALTH_GROUPS, "report_kinds": REPORT_KINDS})
 
 

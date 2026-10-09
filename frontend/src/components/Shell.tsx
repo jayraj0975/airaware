@@ -1,14 +1,15 @@
 import { Suspense, useState } from 'react'
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useSession } from '../session'
 import { shortDate } from '../util'
-import { Dialog, Spinner, toast, Toaster } from './ui'
+import { Dialog, ErrorBoundary, Spinner, toast, Toaster } from './ui'
 
 export default function Shell() {
   const { user, unread, status, city, setCity, setUser } = useSession()
   const [open, setOpen] = useState(false)
   const nav = useNavigate()
+  const location = useLocation()
   const signOut = async () => {
     await api.post('/api/auth/logout').catch(() => undefined)
     navigator.serviceWorker?.controller?.postMessage('signed-out')  // drop anything cached while signed in
@@ -58,7 +59,7 @@ export default function Shell() {
             : <>Station readings up to {shortDate(status.cities[city]?.last_measured ?? '')} · weather and particle forecasts live</>}
         </div>
       )}
-      <main><Suspense fallback={<Spinner />}><Outlet /></Suspense></main>
+      <main><ErrorBoundary key={location.pathname}><Suspense fallback={<Spinner />}><Outlet /></Suspense></ErrorBoundary></main>
       <Toaster />
       {user?.needs_consent && <ConsentPrompt />}
       <footer>

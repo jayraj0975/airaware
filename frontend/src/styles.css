@@ -226,3 +226,8 @@ tr.off td { opacity: .5; }
 .two-step-setup { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
 .two-step-setup img { border-radius: 10px; background: #fff; image-rendering: pixelated; }
 .key { display: inline-block; font-size: 1rem; letter-spacing: .08em; padding: 6px 10px; user-select: all; }
+.oops { text-align: center; padding: 40px 24px; display: grid; gap: 10px; justify-items: center; } .oops h1 { font-size: 1.5rem; }
+.explain { background: none; border: 0; padding: 0; margin-top: 8px; font: inherit; font-size: .85rem; font-weight: 600; color: #111; text-decoration: underline; cursor: pointer; }
+.aqi-guide { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; max-height: 60vh; overflow: auto; }
+.aqi-guide li { display: flex; gap: 12px; align-items: flex-start; } .aqi-guide p { margin: 2px 0 0; font-size: .86rem; color: var(--muted); }
+.aqi-guide .band { flex: none; width: 74px; text-align: center; border-radius: 8px; padding: 4px 0; font-weight: 700; font-size: .85rem; color: #111; }

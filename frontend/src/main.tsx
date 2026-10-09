@@ -29,6 +29,18 @@ function Guard({ admin = false, children }: { admin?: boolean; children: ReactNo
   return <>{children}</>
 }
 
+function NotFound() {
+  return (
+    <div className="page narrow">
+      <div className="card oops">
+        <h1>We could not find that page</h1>
+        <p>The link may be old or mistyped. The air, though, is right where you left it.</p>
+        <div className="actions"><a className="btn" href="/">See today's air</a><a className="ghost" href="/explore">Explore insights</a></div>
+      </div>
+    </div>
+  )
+}
+
 const router = createBrowserRouter([{
   element: <Shell />,
   children: [
@@ -47,7 +59,7 @@ const router = createBrowserRouter([{
     { path: '/reset', element: <Reset mode="reset" /> },
     { path: '/me', element: <Guard><Me /></Guard> },
     { path: '/admin', element: <Guard admin><Admin /></Guard> },
-    { path: '*', element: <div className="page narrow"><h1>Page not found</h1><p><a href="/">Back to today's air</a></p></div> },
+    { path: '*', element: <NotFound /> },
   ],
 }])
 

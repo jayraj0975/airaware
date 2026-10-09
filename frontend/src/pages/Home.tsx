@@ -4,7 +4,7 @@ import { api, type Area, type Overview, type Place, type Report, type Station } 
 import AreaMap from '../components/AreaMap'
 import SearchBox from '../components/SearchBox'
 import { ForecastChart, HourBars, WeatherChart } from '../components/charts'
-import { Advice, AqiHero, AskDialog, Card, DayStrip, Empty, ErrorBox, Pill, Spinner, toast, useLoad, useTitle } from '../components/ui'
+import { Advice, AqiHero, AskDialog, Card, DayStrip, Dialog, Empty, ErrorBox, Pill, Spinner, toast, useLoad, useTitle } from '../components/ui'
 import { useSession } from '../session'
 import { compass, dayName, fmt, hourName, shortDate, upcoming, WEATHER } from '../util'
 
@@ -76,6 +76,7 @@ export default function Home() {
 
 function Hero({ o }: { o: Overview }) {
   const { user } = useSession()
+  const [explaining, setExplaining] = useState(false)
   const days = upcoming(o.forecast)
   const today = days[0]
   const tomorrow = days[1]
@@ -85,6 +86,8 @@ function Hero({ o }: { o: Overview }) {
       <AqiHero label={<>{o.city} · {dayName(today.date)} · AirAware forecast</>} value={today.forecast} cat={today.category}
         sub={<>Likely between {fmt(today.lo)} and {fmt(today.hi)} · chance of a Poor day {Math.round(today.p_poor * 100)}% · from station readings up to {shortDate(today.made_from)}</>}>
         <Advice p={today.personal} />
+        <button className="explain" onClick={() => setExplaining(true)}>What do these numbers mean?</button>
+        {explaining && <AqiGuide onClose={() => setExplaining(false)} />}
         {!user && <div className="hint-on-colour"><Link to="/signup">Create a free account</Link> for advice tuned to your health and alerts for your places.</div>}
       </AqiHero>
       <div className="card stack">
@@ -105,6 +108,24 @@ function Hero({ o }: { o: Overview }) {
         <div className="row"><span>Breathing the last measured day</span><b>≈ {fmt(o.measured.cigarettes, 1)} cigarettes</b></div>
       </div>
     </div>
+  )
+}
+
+function AqiGuide({ onClose }: { onClose: () => void }) {
+  const { status } = useSession()
+  let lower = 0
+  return (
+    <Dialog title="What the AQI numbers mean" onClose={onClose}>
+      <p className="small muted">The Air Quality Index turns the amount of fine dust and smoke (PM2.5 and PM10) in the air into one number from 0 to 500. Lower is better. These are India's official bands (CPCB).</p>
+      <ul className="aqi-guide">
+        {status?.categories.map((c) => {
+          const range = c.upper == null ? `${lower + 1}+` : `${lower === 0 ? 0 : lower + 1}–${c.upper}`
+          lower = c.upper ?? lower
+          return <li key={c.name}><span className="band" style={{ background: c.colour }}>{range}</span><div><b>{c.name}</b><p>{c.advice}</p></div></li>
+        })}
+      </ul>
+      <p className="small muted">Our numbers are forecasts and estimates, not the official reading. <a href="/science">How we make them</a>.</p>
+    </Dialog>
   )
 }
 

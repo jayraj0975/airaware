@@ -15,7 +15,7 @@ export interface Weather {
 export interface Status {
   cities: Record<string, { lat: number; lon: number; last_measured: string; stations: number }>
   trained_at: string; live_readings: boolean; live_at: string | null; live_key: boolean
-  categories: { upper: number | null; name: string; colour: string }[]
+  categories: { upper: number | null; name: string; colour: string; advice: string }[]
   health_groups: Record<string, string>; report_kinds: Record<string, string>
 }
 export interface Overview {
