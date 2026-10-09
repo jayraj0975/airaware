@@ -126,12 +126,17 @@ def visitor(host: str) -> str:
     return str(ipaddress.ip_network(f"{ip}/64", strict=False)) if ip.version == 6 else str(ip)
 
 
+def recent_actions(action: str, ip_key: str, minutes: int) -> int:
+    since = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+    return db.one("SELECT COUNT(*) AS n FROM audit WHERE action = ? AND ip = ? AND at >= ?", (action, ip_key, since))["n"]
+
+
 def login_blocked(ip_key: str, email: str) -> bool:
     """True after LOGIN_LIMIT failed sign-ins in the window from this visitor, or against this email since its last
     successful sign-in. Failures are counted from the audit table, so they survive restarts and no flood of other
     addresses can push them out of memory."""
     since = (datetime.now(timezone.utc) - timedelta(minutes=LOGIN_WINDOW_MINUTES)).isoformat(timespec="seconds")
-    by_ip = db.one("SELECT COUNT(*) AS n FROM audit WHERE action = 'user.login_failed' AND ip = ? AND at >= ?", (ip_key, since))["n"]
+    by_ip = recent_actions("user.login_failed", ip_key, LOGIN_WINDOW_MINUTES)
     by_email = db.one("""SELECT COUNT(*) AS n FROM audit WHERE action = 'user.login_failed' AND detail = ? AND at >= ?
                          AND at > COALESCE((SELECT MAX(at) FROM audit WHERE action = 'user.login' AND detail = ?), '')""",
                       (email, since, email))["n"]

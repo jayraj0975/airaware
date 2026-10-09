@@ -14,6 +14,7 @@ from airaware.server.public import forecast_rows, state
 
 router = APIRouter(prefix="/api")
 MAX_PLACES, MAX_ALERTS = 10, 20
+SIGNUPS_PER_HOUR = 5  # per IPv4 address or IPv6 /64
 
 
 class SignUp(BaseModel):
@@ -64,13 +65,16 @@ def signup(body: SignUp, request: Request, response: Response):
     auth.check_new_password(body.password)
     if body.city not in CITIES:
         raise HTTPException(422, "Pick Pune or Mumbai.")
+    ip = auth.visitor(client_ip(request))
+    if auth.recent_actions("user.signup", ip, minutes=60) >= SIGNUPS_PER_HOUR:
+        raise HTTPException(429, "Too many new accounts from this network. Try again in an hour.")
     try:  # every sign-up is a plain user; admins are promoted from the server CLI (see auth.py)
         uid = db.run("INSERT INTO users (email, name, pw_hash, city, created_at) VALUES (?, ?, ?, ?, ?)",
                      (email, body.name.strip(), auth.hash_password(body.password), body.city, db.now()))
     except sqlite3.IntegrityError:
         raise HTTPException(409, "An account with that email already exists. Sign in instead.")
     auth.start_session(response, uid, request)
-    db.audit("user.signup", uid, email, client_ip(request))
+    db.audit("user.signup", uid, email, ip)
     return auth.public_user(db.one("SELECT * FROM users WHERE id = ?", (uid,)))
 
 

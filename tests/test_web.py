@@ -11,7 +11,7 @@ os.environ["AIRAWARE_REFRESH"] = "0"
 os.environ["AIRAWARE_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
 
 from airaware import live  # noqa: E402
-from airaware.server import app as server, auth, core, db, manage, public  # noqa: E402
+from airaware.server import account, app as server, auth, core, db, manage, public  # noqa: E402
 
 H = {"X-AirAware": "1"}
 WEATHER = {"current": {"time": "2026-10-09T21:00", "temperature_2m": 27.0, "relative_humidity_2m": 50, "apparent_temperature": 28.0,
@@ -24,6 +24,7 @@ def app():
     mp = pytest.MonkeyPatch()
     mp.setattr(live, "weather_now", lambda lat, lon: WEATHER)
     mp.setattr(live, "place_name", lambda lat, lon: "Test Nagar, Pune")
+    mp.setattr(account, "SIGNUPS_PER_HOUR", 1000)  # every test client signs up from the same address
     with TestClient(server.app) as c:
         yield c
     mp.undo()
@@ -249,3 +250,8 @@ def test_area_limit_per_visitor_groups_ipv6_and_caps_memory(monkeypatch):
     for i in range(20):
         public.allow(f"10.0.0.{i}")
     assert len(public._hits) == 5 and "10.0.0.19" in public._hits
+
+
+def test_signups_are_limited_per_network(app, monkeypatch):
+    monkeypatch.setattr(account, "SIGNUPS_PER_HOUR", 0)
+    assert signup(client(app), "spammer@example.com").status_code == 429
