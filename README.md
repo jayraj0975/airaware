@@ -1,20 +1,19 @@
 # AirAware
 
 **Know your air, a week ahead.** A full-stack platform that forecasts air quality for any street in **Pune** and
-**Mumbai** up to seven days ahead, from 37 government (CPCB) monitoring stations, live weather and the Copernicus CAMS
-particle forecast. People sign up to save their places, get advice tuned to their health and an alert before a bad
+**Mumbai** up to seven days ahead, from 37 government (CPCB) monitoring stations and the weather forecast. People sign up to save their places, get advice tuned to their health and an alert before a bad
 day, and report pollution sources; admins moderate reports, manage users and watch the data pipeline.
 
 **Live: [airaware-production-8299.up.railway.app](https://airaware-production-8299.up.railway.app)** · installable on a phone as an app.
 
 DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as a portfolio product.
 
-| | |
+| Honest test (inputs available on the day), 662 next-day forecasts | |
 |---|---|
-| Next-day error (using target-day weather/CAMS inputs) | 10.4 AQI vs 12.4 for persistence; historical test inputs are not archived forecast vintages |
-| Next-day error without target-day weather/CAMS | **12.24 AQI** vs 12.42 persistence (about 1.4% lower MAE) |
-| Category accuracy with target-day inputs | 82.6%; treat as an optimistic historical estimate, not a live-forecast guarantee |
-| 5-day error with target-day inputs | 18.1 vs 25.3 persistence; historical test inputs are not archived forecast vintages |
+| Next-day error | **12.0 AQI** vs 12.4 for "tomorrow = today" (3% lower; not statistically significant, p = 0.20) |
+| 5 days ahead | **20.7** vs 25.3 (18% lower; Diebold-Mariano p = 0.003) |
+| Where the gain is significant | 4 to 7 days ahead (p < 0.05) |
+| 80% forecast ranges | held the real AQI 78-88% of the time across horizons |
 
 ![Today: the forecast, today hour by hour, and any area on the map](docs/screenshots/home.png)
 
@@ -157,10 +156,12 @@ explanations), `python -m airaware.model` (re-run the evaluation into reports/me
 - **Weather**: ERA5 reanalysis from [Open-Meteo](https://open-meteo.com) (no key): temperature, humidity, rain, wind,
   pressure and boundary-layer (mixing) height at each city centre. Open-Meteo's forecast fills the last few days ERA5
   has not reached yet and the week ahead. Current conditions come from Open-Meteo's live forecast API.
+- **Issued weather forecasts**: Open-Meteo's archive of past forecast runs (June 2024 onwards), the weather as it was
+  forecast 1 to 7 days before each day. This is what makes a fair backtest possible (see Method).
 - **CAMS**: the Copernicus Atmosphere Monitoring Service PM2.5 and PM10, through Open-Meteo (no key): its analysis for
   every day since August 2022 and its forecast for the next four days. CAMS reads 2-4× low in Indian cities because
-  it misses local road dust, but it rises and falls with the stations (correlation 0.88 in Pune), so it is a strong
-  input. On its own, even scaled to the stations, it was a worse live estimate than the four-day-old reading (Pune MAE
+  it misses local road dust, but it rises and falls with the stations (correlation 0.88 in Pune). Its past forecasts are
+  not archived, so it is only used in the upper-bound experiment, not by the served model. On its own, even scaled to the stations, it was a worse live estimate than the four-day-old reading (Pune MAE
   24 vs 16), so the site does not show it as a live AQI.
 
 ### Cleaning (`airaware/data.py`)
@@ -184,55 +185,75 @@ February 2025 to October 2026. That gives about 1,460 city-days with an AQI.
 
 ## Method
 
-Each row is one city on one evening D. The intended features are what is known that evening, but the historical archive does not preserve the weather/CAMS forecast vintage that would have been available on D. Consequently, the target-day weather/CAMS experiment below is not a fully leakage-safe simulation of real-time forecasting: it uses historical weather/CAMS values that can be more accurate than forecasts available at issuance time. The ablation without target-day weather/CAMS is the more conservative historical comparison until archived forecast-vintage data is available.
+Each row is one city on one evening D; the target is the AQI on D+h for h = 1 to 7 days. The rule that matters most:
+**every input must be something a forecaster really had on the evening of D.** Weather records (ERA5) and the CAMS particle
+analysis are only known afterwards and are more accurate than the forecasts available on the day, so a backtest fed with
+them looks better than the model can ever be live.
 
-The feature groups are:
+Three models are compared on exactly the same test rows (`airaware/model.py`):
 
-- today's AQI, PM2.5 and PM10, yesterday's and the day before's AQI, and the 7-day average;
-- today's weather and **the target day's weather**; at forecast time that comes from a weather forecast;
-- today's CAMS particles and **CAMS's forecast for the target day**;
-- the season, the day of the week, whether it is Diwali week, and the city.
+- **AirAware**, the model the site serves: the stations' history (today's AQI, PM2.5 and PM10, the two days before, the
+  7-day mean), the calendar (season, weekday, Diwali week), the city, and **weather as it was actually forecast**. The
+  forecasts come from Open-Meteo's archive of past runs (`python -m airaware.data --vintage` writes
+  `data/forecast_vintage.csv`, June 2024 onwards): today's weather from the run issued a day earlier, and the target day's
+  weather from runs issued h + 1 days before it, so every run was issued before D. Seven days ahead no archived run is old
+  enough, so AirAware uses station history only there. Boundary-layer height is not in the archive.
+- **Station history only**: the same station and calendar inputs with no weather and no CAMS at all. This is the most
+  conservative benchmark: nothing in it can be more accurate in the backtest than it was on the day.
+- **Upper bound**: the original design, with the realized weather and the CAMS analysis for the target day. CAMS keeps no
+  archive of its past forecasts, so this cannot be made fair. It is kept only to show what perfect weather and particle
+  forecasts would add. It is **not** an estimate of live accuracy.
 
-The target is the AQI on D+h for h = 1 to 7 days; the weather and CAMS inputs are those of the target day. A test (`tests/test_airaware.py`) checks that no feature uses anything from the target day.
+AQI changes slowly from day to day, so a model that predicts the AQI level directly loses to simply saying
+"tomorrow = today". All three predict the **change** from today with ridge (linear) regression, one model per horizon.
+At run time AirAware is given the best weather known at that moment (ERA5 for past days, the current forecast ahead): never
+anything from the future, only fresher than the archived runs it was trained on.
 
-AQI changes slowly from day to day, so a model that predicts the AQI level directly lost to simply saying
-"tomorrow = today". AirAware instead predicts the **change** from today, using ridge (linear) regression.
+**Walk-forward evaluation.** At the start of each month from October 2025, every method is retrained on the rows whose
+target had already been measured by that day, then forecasts the month. Next day: 662 city-day forecasts for
+2 October 2025 to 6 October 2026, including winter 2025–26. Tests in `tests/test_airaware.py` check that training targets
+were measured before each forecast, that no feature changes when any later AQI changes, that issued-forecast columns come
+from runs issued before D, that the conservative benchmark ignores weather and CAMS, and that every method is scored on the
+same rows, reproducibly and with missing data.
 
-**Walk-forward evaluation.** At the start of each month from October 2025, every method is retrained on every row whose
-target had already been measured, and then forecasts that month. This covers 660 next-day city forecasts up to
-5 October 2026, including winter 2025–26.
+Reproduce: `python -m airaware.model` (writes [`reports/metrics.md`](reports/metrics.md)).
 
-| Method | MAE | RMSE | R² | Category accuracy | Poor-day recall |
+| Method (next day) | MAE | RMSE | R² | Category accuracy | Poor-day recall |
 |---|---:|---:|---:|---:|---:|
-| Persistence (tomorrow = today) | 12.42 | 18.10 | 0.864 | 76.8% | 61.5% |
-| 7-day average | 17.95 | 25.51 | 0.730 | 66.5% | 11.5% |
-| Seasonal average (city, month) | 28.87 | 40.07 | 0.333 | 56.4% | 0% |
-| Linear regression on the AQI level | 12.69 | 18.16 | 0.863 | 79.1% | **65.4%** |
-| Gradient boosting on the change | 11.28 | 16.54 | 0.886 | 79.8% | 50.0% |
-| AirAware without tomorrow's forecasts (weather and CAMS) | 12.24 | 17.56 | 0.872 | 77.4% | 57.7% |
-| AirAware without CAMS | 11.56 | 16.63 | 0.885 | 79.5% | 61.5% |
-| **AirAware** (linear regression on the change) | **10.44** | **15.41** | **0.901** | **82.6%** | 61.5% |
+| Persistence (tomorrow = today) | 12.42 | 18.09 | 0.864 | 76.7% | **61.5%** |
+| 7-day average | 17.93 | 25.48 | 0.730 | 66.5% | 11.5% |
+| Seasonal average (city, month) | 28.84 | 40.02 | 0.333 | 56.5% | 0% |
+| Station history only (no weather, no CAMS) | 12.11 | 17.42 | 0.874 | 77.2% | 53.8% |
+| Linear regression on the AQI level (AirAware's inputs) | 12.37 | 17.53 | 0.872 | 77.2% | 34.6% |
+| Gradient boosting on the change (AirAware's inputs) | **11.82** | 17.20 | 0.877 | **77.5%** | 53.8% |
+| **AirAware** (linear regression on the change) | 12.00 | **17.11** | **0.878** | 77.3% | 42.3% |
+| *Upper bound: realized weather + CAMS (not available on the day)* | *10.44* | *15.40* | *0.901* | *82.6%* | *61.5%* |
 
-MAE is in AQI points. Poor-day recall is the share of days that were actually Poor or worse (AQI > 200) that the
-method also called Poor or worse.
+MAE is in AQI points. Poor-day recall is the share of days that were actually Poor or worse (AQI > 200) that the method
+also called Poor or worse; there were only 26 such days in the test, so those percentages are noisy.
 
-**Statistical caveat.** The reported Diebold-Mariano test (absolute error, Newey-West variance over 7 days) compares the target-day-input model with persistence on this historical dataset. Its p-value does not correct for the unavailable forecast vintages, so it cannot establish that the same improvement will hold in real-time operation. The no-target-day-input ablation has MAE 12.245 versus persistence 12.422; that modest difference should not be described as a proven statistically significant live gain.
+**Is the gain real?** Diebold-Mariano tests on absolute error, with each day's error averaged over the two cities so the
+Newey-West variance (7 lags) runs along time: next day, AirAware against persistence gives p = 0.196 and station history
+only gives p = 0.127. **Neither is significant next day.** An earlier version of this README reported p < 0.001; that
+compared the upper-bound model and pooled the two cities' series, and it does not hold up.
 
-**Further ahead.** The same walk-forward test for each horizon, against repeating the last reading:
+**Further ahead.** The same walk-forward test for each horizon:
 
 | Days ahead | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| AirAware MAE | 10.4 | 14.3 | 16.5 | 17.8 | 18.1 | 18.7 | 18.6 |
-| Last reading repeated MAE | 12.4 | 17.9 | 21.0 | 23.3 | 25.3 | 26.4 | 26.7 |
-| AirAware 80% range coverage | 88% | 88% | 87% | 85% | 86% | 86% | 85% |
+| AirAware MAE | 12.0 | 17.1 | 19.3 | 20.0 | 20.7 | 22.3 | 23.2 |
+| Station history only MAE | 12.1 | 17.3 | 19.7 | 21.2 | 22.1 | 22.9 | 23.2 |
+| Persistence MAE | 12.4 | 17.9 | 21.0 | 23.3 | 25.3 | 26.4 | 26.7 |
+| AirAware vs persistence, DM p | 0.20 | 0.20 | 0.12 | **0.04** | **0.003** | **0.01** | **0.009** |
+| AirAware 80% range coverage | 84% | 83% | 82% | 82% | 81% | 78% | 88% |
+| *Upper bound MAE (not live)* | *10.4* | *14.3* | *16.5* | *17.8* | *18.0* | *18.7* | *18.6* |
 
 **Uncertainty.** The 80% range is split conformal: the 10th and 90th percentiles of AirAware's own errors in earlier
 walk-forward months (in-sample errors until 60 exist). The chance of a Poor day is the share of those past errors that
-would lift the forecast above 200. On the test months the ranges held the real AQI 85-88% of the time, slightly more
-than the 80% promised.
+would lift the forecast above 200. On the test months the ranges held the real AQI 78-88% of the time.
 
 **Explanations.** AirAware is linear, so each forecast splits exactly into today's AQI, a baseline change, and one
-push per input (coefficient × standardised input). The app shows the largest pushes.
+push per input (coefficient × standardised input). The analysis app shows the largest pushes.
 
 ### Insights (`airaware/insights.py`)
 
@@ -250,20 +271,24 @@ push per input (coefficient × standardised input). The app shows the largest pu
 
 What this shows:
 
-- AirAware beats "tomorrow = today" by 16% on MAE and gets the AQI category right on 83% of days instead of 77%.
-  The advantage grows with the horizon: 21% at 3 days, 29% at 5.
-- It wins in both cities: Pune MAE 10.6 vs 13.4, Mumbai 10.2 vs 11.5.
-- CAMS is the biggest single gain: without it, MAE rises from 10.44 to 11.56. Without any target-day forecasts
-  (weather and CAMS), it rises to 12.24.
-- Temperature is the strongest weather input. Holding today fixed, the model expects worse air when tomorrow is warmer than today. This is an association learned from about 20 months of data, not a proven cause.
-- For catching Poor days, plain linear regression on the level does best (65%). That trade-off is a fair one to discuss in the viva.
+- Next day, nothing beats "tomorrow = today" by much once the inputs are fair: AirAware is 3% better and the difference is
+  not statistically significant. It wins in Pune (12.1 vs 13.4) and is slightly worse in Mumbai (11.9 vs 11.5).
+- The model earns its keep further ahead: 18% lower error than persistence at 5 days, significant from 4 to 7 days ahead,
+  because it falls back on the season and the weather forecast while a repeated reading goes stale.
+- Weather forecasts add a little on top of station history (12.00 vs 12.11 next day, 20.7 vs 22.1 at 5 days).
+- The upper bound (10.4 next day) shows how much perfect weather and particle forecasts would be worth. The gap between it
+  and AirAware is the price of not having archived CAMS forecasts.
+- AirAware catches fewer Poor days than persistence (42% vs 62% of 26 days): a regression to the mean that smooths spikes.
+  That trade-off is a fair one to discuss in the viva.
+- Gradient boosting is slightly more accurate next day (11.8). AirAware stays linear so every forecast can be explained exactly.
 
 ## Limitations
 
 - The training data is small and has a gap: no usable data for 2023–2024.
 - City AQI is a station average, so it shifts a little as stations go offline and come back.
-- The main historical experiment uses actual/reanalysis weather and CAMS analysis values for target days instead of archived forecast vintages. This can make the headline accuracy optimistic, especially at longer horizons. The no-target-day-input ablation is a more conservative check, but it is not a substitute for evaluation with archived forecasts.
-- Live forecasts mix two weather sources: ERA5 for the past, Open-Meteo's forecast model for the last few days and the week ahead.
+- CAMS keeps no archive of its past forecasts, so no fair test of CAMS as an input is possible; it appears only in the upper-bound experiment. The weather archive starts in June 2024 and lacks boundary-layer height.
+- About a year of test data (662 next-day forecasts, 26 Poor days): small enough that the next-day differences are within noise.
+- Live forecasts are given the best weather known when they run (ERA5 for past days, Open-Meteo's forecast ahead), which is slightly fresher than the archived runs the model was trained on.
 - The AQI is computed from PM only, not CPCB's official multi-pollutant AQI. The two agree on most days.
 - Without an OpenAQ key the archive runs about four days behind, so "tomorrow" is really a 5-day-ahead forecast from
   the last reading. The live path (OpenAQ API) is covered by tests with recorded responses but has not been run

@@ -199,6 +199,7 @@ td.wrap { white-space: normal; min-width: 220px; }
 th { color: var(--muted); font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; white-space: normal; vertical-align: bottom; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.best td { font-weight: 600; background: var(--accent-soft); }
+tr.muted td { color: var(--muted); }
 tr.off td { opacity: .5; }
 .dot { width: 8px; height: 8px; margin-right: 7px; vertical-align: 1px; }
 .tag { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600; border: 1px solid var(--line-2); color: var(--ink-2); text-transform: capitalize; }
