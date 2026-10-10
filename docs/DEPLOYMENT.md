@@ -47,9 +47,12 @@ Railway runs the same Dockerfile, always on, at a fixed address, and redeploys o
 - Project `airaware`, service `airaware`, address `https://airaware-production-8299.up.railway.app` (port 8000).
 - A volume mounted at `/app/data` holds the database, refreshed data and backups. On first start the container
   copies the starting data into the empty volume, makes it writable, then runs the server as an unprivileged user.
-- Variables: `AIRAWARE_PUBLIC_URL` (the address above), `AIRAWARE_SECURE_COOKIES=1`, `PORT=8000`. Rate limits work per
-  visitor only when `AIRAWARE_TRUSTED_PROXIES` names Railway's edge network and `AIRAWARE_CLIENT_IP_HEADER` names the
-  header it sets; until then every visitor shares one set of limits (safe, but strict).
+- Variables: `AIRAWARE_PUBLIC_URL` (the address above), `AIRAWARE_SECURE_COOKIES=1`, `PORT=8000`,
+  `AIRAWARE_TRUSTED_PROXIES=100.64.0.0/10` and `AIRAWARE_CLIENT_IP_HEADER=x-real-ip`. Railway's edge connects from
+  addresses in 100.64.0.0/10 and overwrites `X-Real-IP` with the visitor's address (checked: a forged value is
+  replaced), so limits apply per visitor. Without these two, each connection would count as a new visitor.
+- Making an admin without a shell: sign up on the site first, then set `AIRAWARE_MAKE_ADMIN=you@example.com`; the
+  next start promotes that existing account. Remove the variable afterwards. Admins still need two-step sign-in.
 - Needs about 1 GB of memory while retraining, so plan for Railway's Hobby plan rather than the trial credit.
 
 ## Local development

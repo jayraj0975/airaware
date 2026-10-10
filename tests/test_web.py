@@ -495,3 +495,11 @@ def test_link_previews_use_a_safe_absolute_origin(app, monkeypatch, tmp_path):
     assert 'content="https://airaware.in/og.png"' in app.get("/me", headers={"Host": "evil.example"}).text
     monkeypatch.setenv("AIRAWARE_PUBLIC_URL", 'https://x.in/"><script>')
     assert "<script>" not in app.get("/").text
+
+
+def test_make_admin_from_env_promotes_only_existing_accounts(app, monkeypatch):
+    signup(app, "owner@example.com")
+    monkeypatch.setenv("AIRAWARE_MAKE_ADMIN", " Owner@example.com , nobody@example.com")
+    server.promote_listed_admins()
+    assert db.one("SELECT role FROM users WHERE email = 'owner@example.com'")["role"] == "admin"
+    assert db.one("SELECT COUNT(*) AS n FROM users WHERE email = 'nobody@example.com'")["n"] == 0

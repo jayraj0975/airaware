@@ -24,9 +24,18 @@ UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
+def promote_listed_admins() -> None:
+    """For hosts without a shell (Railway): promotes accounts that already exist, like `manage make-admin`. Set
+    AIRAWARE_MAKE_ADMIN only after the owner has signed up (the site does not verify email ownership), then remove it."""
+    for email in filter(None, (e.strip().lower() for e in os.environ.get("AIRAWARE_MAKE_ADMIN", "").split(","))):
+        if db.run("UPDATE users SET role = 'admin' WHERE email = ? AND role != 'admin'", (email,)):
+            db.audit("admin.promoted", None, f"{email} made admin from AIRAWARE_MAKE_ADMIN", "startup")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
+    promote_listed_admins()
 
     def start():
         app.state.core = State()
