@@ -5,6 +5,7 @@
 #                                               the address changes whenever the tunnel restarts; laptop demos only)
 #   docker compose --profile named up -d      + permanent HTTPS address (Cloudflare named tunnel; needs TUNNEL_TOKEN
 #                                               in .env; use this on the server, see docs/DEPLOYMENT.md)
+#   docker compose --profile mongo up -d      + MongoDB for pollution reports (set AIRAWARE_MONGO_URL in .env)
 #   docker compose down                       stop (data stays in the airaware-data volume)
 #
 # Settings come from .env (copy .env.example). Never commit .env.
@@ -23,8 +24,25 @@ services:
       AIRAWARE_SMTP_USER: ${AIRAWARE_SMTP_USER:-}
       AIRAWARE_SMTP_PASSWORD: ${AIRAWARE_SMTP_PASSWORD:-}
       AIRAWARE_SMTP_FROM: ${AIRAWARE_SMTP_FROM:-}
+      AIRAWARE_MONGO_URL: ${AIRAWARE_MONGO_URL:-}   # empty: reports stay in SQLite
+      AIRAWARE_MONGO_DB: ${AIRAWARE_MONGO_DB:-airaware}
     volumes: ["airaware-data:/app/data"]     # database, refreshed data, daily backups
     networks: { airaware-net: { ipv4_address: 172.30.0.10 } }
+    restart: unless-stopped
+
+  mongo:
+    profiles: [mongo]
+    image: mongo:7
+    environment:   # optional login; when set, put the same user and password in AIRAWARE_MONGO_URL
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
+    volumes: ["mongo-data:/data/db"]           # reports survive restarts
+    networks: { airaware-net: { ipv4_address: 172.30.0.30 } }   # no published port: only the app can reach it
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     restart: unless-stopped
 
   tunnel-quick:
@@ -50,3 +68,4 @@ networks:
     ipam: { config: [{ subnet: 172.30.0.0/24 }] }
 volumes:
   airaware-data:
+  mongo-data:
