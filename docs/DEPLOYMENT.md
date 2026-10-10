@@ -1,13 +1,14 @@
 # Deploying AirAware
 
 AirAware is one Docker image: a FastAPI server that also serves the built React app, runs background jobs
-(data refresh every 6 hours, daily backups, alerts, retention) and keeps its state in SQLite on a volume.
+(data refresh every 6 hours, including the archive of issued weather forecasts the model trains on, daily backups, alerts, retention) and keeps its state in SQLite on a volume.
 `compose.yaml` is the single deployment definition, used the same way on a laptop and on a server.
 
 ## What the app needs from a host
 
 | Need | Why |
 |---|---|
+| Optional: MongoDB 7 | only if pollution reports should live in MongoDB (`docker compose --profile mongo`) |
 | A process that runs all the time | background refresh, alerts, backups and retention run inside the server |
 | A persistent disk | SQLite database, refreshed data and backups live in the `airaware-data` volume |
 | Outbound HTTPS | OpenAQ archive, Open-Meteo, OpenStreetMap |
@@ -94,6 +95,9 @@ docker compose up -d --build           # upgrade after git pull
 | `AIRAWARE_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | empty | email for alerts and password resets |
 | `AIRAWARE_TRUSTED_PROXIES` | set in compose | the tunnel's fixed address; do not change |
 | `AIRAWARE_REBUILD_HOURS` | 6 | how often data is refreshed and models retrained |
+| `AIRAWARE_MONGO_URL`, `AIRAWARE_MONGO_DB` | empty, `airaware` | keep pollution reports in MongoDB (see [DATABASE.md](DATABASE.md)); empty keeps them in SQLite |
+| `MONGO_ROOT_USER`, `MONGO_ROOT_PASSWORD` | empty | optional login for the compose `mongo` service |
+| `AIRAWARE_SIGNUPS_PER_HOUR` | 5 | sign-ups allowed per network per hour; raise only for automated tests |
 
 Secrets live only in `.env` on the machine (ignored by git and by Docker builds). Nothing secret is in the image.
 

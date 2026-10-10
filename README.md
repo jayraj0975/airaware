@@ -110,7 +110,7 @@ the new forecasts, scores old ones whose day has been measured, and raises alert
   lookups are limited per visitor (30 a minute) and calls to outside services are rate-capped.
 - Admins are made only from the server command line, never by signing up with a particular email, and must turn on
   two-step sign-in (TOTP authenticator codes, replay-protected) before the admin console opens.
-- Self-pentest: `security/attack.py` runs 56 attacks (CSRF, CORS, IDOR, admin access, SQL injection, XSS storage, Host-header injection,
+- Self-pentest: `security/attack.py` runs 69 attacks (CSRF, CORS, IDOR on places, alerts and reports, admin access, SQL and operator injection, XSS storage, Host-header injection,
   NaN/huge inputs, 64 kB body cap, path traversal, brute force, reset-token guessing, rate limits, session replay)
   and runs in CI with pip-audit and npm audit on every push.
 - Behind the tunnel, a visitor's real address is taken only from the trusted proxy, so limits work per visitor and
@@ -148,8 +148,9 @@ sign-up, because it does not verify email ownership), then turn on two-step sign
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn airaware.server.app:app --reload --port 8000     # API (+ built frontend)
 cd frontend && npm ci && npm run dev                               # http://localhost:5173, proxies /api
-.venv/bin/python -m pytest                                         # 42 backend tests
-cd frontend && npm run build && npx playwright test                # 20 browser tests, desktop and phone
+.venv/bin/python -m pytest                                         # 65 backend tests (8 need MongoDB: set
+                                                                   #   AIRAWARE_TEST_MONGO_URL, else they are skipped)
+cd frontend && npm run build && npx playwright test                # 36 browser tests, desktop and phone
 ```
 
 API docs (OpenAPI): http://localhost:8000/api/docs.
