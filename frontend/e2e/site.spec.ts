@@ -175,3 +175,111 @@ test('two-step sign-in: set up from the dashboard, then sign in with a code; del
   await page.getByRole('dialog').getByRole('button', { name: 'Delete for good' }).click()
   await expect(page.getByText('Your account and everything in it has been deleted.')).toBeVisible()
 })
+
+// ---------- pollution reports, the admin console, honest science, password help ----------
+
+async function signUp(page: import('@playwright/test').Page, name: string, password: string) {
+  const email = `e2e-${name.toLowerCase().replace(/\W+/g, '-')}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`
+  await page.goto('/signup')
+  await page.getByLabel('Name').fill(name)
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password').fill(password)
+  await page.getByLabel('I am 18 or older').check()
+  await page.getByLabel(/I agree to the Terms/).check()
+  await page.getByRole('button', { name: 'Create account' }).click()
+  await expect(page.getByRole('heading', { name: new RegExp(`^Hi ${name.split(' ')[0]}`) })).toBeVisible()
+  return email
+}
+
+test('report pollution from the map, then correct and withdraw it from the dashboard', async ({ page }) => {
+  await signUp(page, 'Reporter', 'e2e-reporter-pass')
+  await page.goto('/?lat=18.50740&lon=73.80770')
+  await expect(page.getByText('forecast for this area')).toBeVisible({ timeout: 20_000 })
+  await page.getByRole('button', { name: 'Report pollution' }).click()
+  await page.getByLabel('What is it?').selectOption('construction')
+  await page.getByLabel('Note (optional)').fill('Dust from a building site')
+  await page.getByRole('button', { name: 'Send report' }).click()
+  await expect(page.getByText(/will show on the map once a moderator approves it/)).toBeVisible()
+
+  await page.goto('/me')
+  const row = page.locator('tr', { hasText: 'Dust from a building site' })
+  await expect(row.getByText('pending')).toBeVisible()
+  await row.getByRole('button', { name: 'Edit' }).click()
+  await page.getByRole('dialog').getByLabel('What is it?').selectOption('burning')
+  await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click()
+  await expect(row.getByText('Garbage or leaf burning')).toBeVisible()
+  await row.getByRole('button', { name: 'Withdraw' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Withdraw' }).click()
+  await expect(page.locator('tr', { hasText: 'Dust from a building site' })).toHaveCount(0)
+})
+
+test('an admin moderates with filters, sees report statistics and downloads a backup', async ({ page, browser }, info) => {
+  // A citizen files a report in Mumbai (a unique note: desktop and phone runs share one test database).
+  const note = `Idling buses at the depot ${info.project.name} ${Date.now()}`
+  const citizen = await browser.newPage()
+  await signUp(citizen, 'Citizen', 'e2e-citizen-pass')
+  const r = await citizen.request.post('/api/reports', { headers: { 'X-AirAware': '1' }, data: { lat: 19.0596, lon: 72.8295, kind: 'traffic', note } })
+  expect(r.status()).toBe(201)
+  await citizen.close()
+
+  // An admin: promoted from the server's command line (the only way), then two-step sign-in, which the console needs.
+  const password = 'e2e-admin-pass-1'
+  const email = await signUp(page, 'Moderator', password)
+  const { execFileSync } = await import('node:child_process')
+  execFileSync('python', ['-m', 'airaware.server.manage', 'make-admin', email], { cwd: '..', env: { ...process.env, AIRAWARE_DB: '/tmp/airaware-e2e.db' } })
+  await page.reload()
+  await page.getByRole('button', { name: 'Set up two-step sign-in' }).click()
+  await page.getByRole('dialog').getByLabel('Your password').fill(password)
+  await page.getByRole('dialog').getByRole('button', { name: 'Continue' }).click()
+  const key = (await page.locator('.key').innerText()).trim()
+  await page.getByLabel('6-digit code').fill(await totp(key))
+  await page.getByLabel('6-digit code').press('Enter')
+  await expect(page.locator('.two-step.on')).toBeVisible()
+
+  await page.goto('/admin')
+  await page.getByRole('button', { name: 'Reports', exact: true }).click()
+  const item = page.locator('.moderation li', { hasText: note })
+  await expect(item).toBeVisible()
+  await item.getByRole('button', { name: 'Approve' }).click()
+  await expect(page.locator('.moderation li', { hasText: note })).toHaveCount(0)  // left the pending queue
+  await page.locator('.filters').getByRole('button', { name: 'approved', exact: true }).click()
+  await page.locator('.filters select').nth(1).selectOption('Mumbai')
+  await expect(page.locator('.moderation li', { hasText: note })).toBeVisible()
+  await page.locator('.filters select').nth(1).selectOption('Pune')
+  await expect(page.locator('.moderation li', { hasText: note })).toHaveCount(0)
+  await expect(page.getByText('Reports, last 90 days')).toBeVisible()
+  await expect(page.locator('.card', { hasText: 'Reports, last 90 days' }).getByRole('cell', { name: 'Heavy traffic or idling' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Data & jobs', exact: true }).click()
+  await page.getByRole('button', { name: 'Download a backup' }).click()
+  const download = page.waitForEvent('download')
+  await page.getByRole('dialog').getByRole('button', { name: 'Download' }).click()
+  expect((await download).suggestedFilename()).toMatch(/^airaware-\d{4}-\d{2}-\d{2}\.db$/)
+})
+
+test('the science page tells the honest story', async ({ page }) => {
+  await page.goto('/science')
+  await expect(page.getByRole('heading', { name: 'How we keep the test honest' })).toBeVisible()
+  await expect(page.getByText(/Station history only/).first()).toBeVisible()
+  await expect(page.getByText(/Upper bound/).first()).toBeVisible()
+  await expect(page.getByText(/significant/).first()).toBeVisible()
+})
+
+test('forgot password answers the same whether or not the account exists', async ({ page }) => {
+  await page.goto('/forgot')
+  await page.getByLabel('Email').fill('nobody-here@example.com')
+  await page.getByRole('button', { name: /send/i }).click()
+  await expect(page.getByText(/if an account|if that email/i)).toBeVisible()
+})
+
+test('no page scrolls sideways on a phone', async ({ page }, info) => {
+  test.skip(info.project.name !== 'phone', 'phone layout only')
+  await signUp(page, 'Narrow', 'e2e-narrow-pass')
+  await page.request.post('/api/reports', { headers: { 'X-AirAware': '1' }, data: { lat: 18.52, lon: 73.85, kind: 'burning', note: 'a row in the reports table' } })
+  for (const path of ['/', '/explore', '/compare', '/science', '/track-record', '/about', '/privacy', '/terms', '/rights', '/me', '/admin']) {
+    await page.goto(path)
+    await page.waitForLoadState('networkidle')
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(over, path).toBeLessThanOrEqual(0)
+  }
+})

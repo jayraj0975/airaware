@@ -16,7 +16,7 @@ from airaware.server.public import forecast_rows, state
 
 router = APIRouter(prefix="/api")
 MAX_PLACES, MAX_ALERTS = 10, 20
-SIGNUPS_PER_HOUR = 5  # per IPv4 address or IPv6 /64
+SIGNUPS_PER_HOUR = int(os.environ.get("AIRAWARE_SIGNUPS_PER_HOUR", 5))  # per IPv4 address or IPv6 /64; raised only for browser tests
 
 
 class SignUp(BaseModel):

@@ -104,6 +104,14 @@ docker compose --profile mongo up -d
 To require a login, set `MONGO_ROOT_USER` and `MONGO_ROOT_PASSWORD` in `.env` before the first start and use
 `mongodb://USER:PASSWORD@172.30.0.30:27017/?authSource=admin`.
 
+**Backups.** The daily backup and the admin console's "Download a backup" copy the SQLite database only. Back up the
+reports in MongoDB with its own tools:
+
+```sh
+docker compose exec mongo mongodump --db airaware --archive --gzip > reports-$(date +%F).archive.gz   # back up
+docker compose exec -T mongo mongorestore --archive --gzip --drop < reports-2026-10-10.archive.gz      # restore
+```
+
 **Tests** (`tests/test_reports.py` runs the same contract on both stores; `tests/test_web.py` covers the API):
 
 ```sh

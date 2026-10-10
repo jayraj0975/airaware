@@ -280,10 +280,10 @@ function ReportButton({ lat, lon, onDone }: { lat: number; lon: number; onDone: 
   }
   return (
     <div className="report-form">
-      <select value={kind} onChange={(e) => setKind(e.target.value)}>
+      <label className="small">What is it?<select value={kind} onChange={(e) => setKind(e.target.value)}>
         {Object.entries(status?.report_kinds ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-      </select>
-      <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={280} placeholder="What did you see? (optional)" />
+      </select></label>
+      <label className="small">Note (optional)<input value={note} onChange={(e) => setNote(e.target.value)} maxLength={280} placeholder="What did you see?" /></label>
       <div className="actions"><button className="btn small" disabled={busy} onClick={send}>Send report</button><button className="ghost small" onClick={() => setOpen(false)}>Cancel</button></div>
     </div>
   )

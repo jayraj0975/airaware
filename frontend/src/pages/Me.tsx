@@ -313,7 +313,7 @@ function MyReports({ reports, error, reload }: { reports: MyReport[] | null; err
   const [busy, setBusy] = useState(false)
   if (error) return <ErrorBox error={error} />
   if (!reports) return <Spinner />
-  if (reports.length === 0) return <Empty>You have not reported anything yet. Click a spot on the <Link to="/">map</Link> and choose “Report pollution here”.</Empty>
+  if (reports.length === 0) return <Empty>You have not reported anything yet. Click a spot on the <Link to="/">map</Link> and choose “Report pollution”.</Empty>
   const save = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)

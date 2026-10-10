@@ -214,13 +214,33 @@ function DataTab() {
   const jobs = useLoad(() => api.get<Job[]>('/api/admin/jobs'), [])
   const stations = useLoad(() => api.get<StationHealth[]>('/api/admin/stations'), [])
   const [msg, setMsg] = useState('')
+  const [askBackup, setAskBackup] = useState(false)
+  const backup = async () => {
+    // A file download, so fetch directly rather than through the JSON helper.
+    const r = await fetch('/api/admin/backup', { method: 'POST', headers: { 'X-AirAware': '1' }, credentials: 'same-origin' })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail ?? `Backup failed (${r.status})`)
+    const name = /filename="?([^";]+)/.exec(r.headers.get('content-disposition') ?? '')?.[1] ?? 'airaware-backup.db'
+    const url = URL.createObjectURL(await r.blob())
+    const a = Object.assign(document.createElement('a'), { href: url, download: name })
+    a.click()
+    URL.revokeObjectURL(url)
+    toast('Backup downloaded. Keep it somewhere safe.')
+    setAskBackup(false)
+  }
   const refresh = async () => {
     try { await api.post('/api/admin/refresh'); setMsg('Rebuild started: downloading new readings, weather and CAMS, then retraining. This takes a few minutes.'); setTimeout(jobs.reload, 1500) }
     catch (e) { setMsg((e as Error).message) }
   }
   return (
     <>
-      <Card title="Pipeline jobs" hint="Startup, scheduled and manual rebuilds" action={<div className="actions"><button className="ghost small" onClick={jobs.reload}>Reload</button><button className="btn small" onClick={refresh}>Rebuild data now</button></div>}>
+      <Card title="Pipeline jobs" hint="Startup, scheduled and manual rebuilds" action={<div className="actions"><button className="ghost small" onClick={jobs.reload}>Reload</button><button className="ghost small" onClick={() => setAskBackup(true)}>Download a backup</button><button className="btn small" onClick={refresh}>Rebuild data now</button></div>}>
+        {askBackup && (
+          <ConfirmDialog title="Download a backup of the database?" ok="Download" onClose={() => setAskBackup(false)} onConfirm={async () => {
+            try { await backup() } catch (e) { toast((e as Error).message, 'error') }
+          }}>
+            It holds every account, including password hashes, places and alerts, so store it as carefully as the server itself. The download is recorded in the audit log. Pollution reports kept in MongoDB are not in this file (see docs/DATABASE.md).
+          </ConfirmDialog>
+        )}
         {msg && <p className="small ok">{msg}</p>}
         {!jobs.data ? <Spinner /> : (
           <div className="table-wrap"><table>

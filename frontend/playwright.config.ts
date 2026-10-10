@@ -16,6 +16,6 @@ export default defineConfig({
     url: 'http://127.0.0.1:8010/api/health',
     timeout: 180_000,
     reuseExistingServer: false,
-    env: { AIRAWARE_DB: '/tmp/airaware-e2e.db', AIRAWARE_REFRESH: '0' },
+    env: { AIRAWARE_DB: '/tmp/airaware-e2e.db', AIRAWARE_REFRESH: '0', AIRAWARE_SIGNUPS_PER_HOUR: '1000' },  // every test signs up from 127.0.0.1
   },
 })

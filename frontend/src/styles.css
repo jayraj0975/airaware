@@ -174,6 +174,7 @@ footer a { color: var(--ink-2); }
 .wx div { padding: 8px; text-align: center; font-size: .74rem; color: var(--muted); border-right: 1px solid var(--line); }
 .wx div:last-child { border-right: 0; } .wx b { display: block; font-size: 1rem; color: var(--ink); font-weight: 600; }
 .report-form { display: grid; gap: 8px; width: 100%; }
+.report-form label { display: grid; gap: 4px; color: var(--muted); }
 .chips { margin-top: 12px; font-size: .85rem; color: var(--muted); }
 .compare-list { display: grid; gap: 10px; }
 .compare-item { border: 1px solid var(--line); border-left: 4px solid; padding: 10px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-radius: var(--radius-sm); }
@@ -192,7 +193,7 @@ footer a { color: var(--ink-2); }
 .search-results li.on { background: var(--soft); } .search-results small { color: var(--muted); }
 
 /* ---------- tables ---------- */
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; position: relative; }  /* relative: keeps visually hidden labels inside the scroller */
 table { width: 100%; border-collapse: collapse; font-size: .88rem; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
 td.wrap { white-space: normal; min-width: 220px; }
