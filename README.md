@@ -70,12 +70,23 @@ DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as
                             ├─ account.py  sign-up/in, profile, places, alerts, notifications
                             ├─ admin.py    overview, users, moderation, jobs, audit
                             ├─ core.py     state, forecast log + scoring, alerts, background refresh
+                            ├─ reports.py  citizen reports + moderation: MongoDB when AIRAWARE_MONGO_URL is set
+                            │              (2dsphere index, $jsonSchema validator, aggregation), else SQLite
                             └─ db.py       SQLite (WAL): users, sessions, places, alerts, notifications,
-                                           reports, forecast_log, jobs, audit
+                                           forecast_log, jobs, audit
  ML and data (airaware/) ── data.py (download + clean), model.py (walk-forward ridge models, conformal ranges,
                             Diebold-Mariano), insights.py, live.py (weather, any-point estimates, OpenAQ)
- Sources ── OpenAQ archive of CPCB stations · Open-Meteo (ERA5, forecast, CAMS) · OpenStreetMap
+ Sources ── OpenAQ archive of CPCB stations · Open-Meteo (ERA5, forecasts, archived forecast runs, CAMS) · OpenStreetMap
 ```
+
+**Two applications, two roles.** The React + FastAPI platform above is the product: it is what Docker and the
+deployment run. `app.py` is a separate **Streamlit analysis app** for the data-science side (replay any test day,
+what-if weather sliders, exact per-forecast explanations, error by month). It reads the same data and models but is
+not deployed; run it locally with `.venv/bin/streamlit run app.py`.
+
+**Databases.** Accounts and everything relational live in SQLite; pollution reports live in MongoDB when it is
+configured. Why, the document schema, indexes, the aggregation pipeline, setup and the AD mini-project mapping are in
+**[docs/DATABASE.md](docs/DATABASE.md)**.
 
 A background thread rebuilds the data and retrains every 6 hours (live readings hourly with an OpenAQ key), logs
 the new forecasts, scores old ones whose day has been measured, and raises alerts.
@@ -123,6 +134,7 @@ setting, backups and troubleshooting. In short:
 cp .env.example .env                    # optional settings; never commit .env
 docker compose up -d                    # http://localhost:8000
 docker compose --profile quick up -d    # plus a temporary public HTTPS address, for laptop demos
+docker compose --profile mongo up -d    # plus MongoDB for pollution reports (set AIRAWARE_MONGO_URL, see docs/DATABASE.md)
 docker compose down                     # stop; data stays in the airaware-data volume
 ```
 
@@ -145,9 +157,9 @@ API docs (OpenAPI): http://localhost:8000/api/docs.
 **CI** (GitHub Actions, every push): backend tests, frontend lint and type-checked build, end-to-end browser tests
 on desktop and phone sizes, and a Docker build that is started and smoke-tested.
 
-Other tools: `.venv/bin/streamlit run app.py` (analysis app with replay, what-if sliders and per-forecast
-explanations), `python -m airaware.model` (re-run the evaluation into reports/metrics.md), `python -m airaware.data`
-(refresh the data).
+Other tools: `.venv/bin/streamlit run app.py` (the analysis app), `python -m airaware.model` (re-run the evaluation
+into reports/metrics.md), `python -m airaware.data` (refresh the station, weather and CAMS data) and
+`python -m airaware.data --vintage` (refresh the archive of issued weather forecasts).
 
 ## Data
 
