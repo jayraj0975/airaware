@@ -16,13 +16,12 @@ from airaware.aqi import ADVICE, CATEGORIES, HEALTH_GROUPS, category, personal_a
 from airaware.data import CITIES, STATIONS
 from airaware.insights import best_hours, cigarettes, diwali_effect, dominant, station_agreement
 from airaware.model import AIRAWARE, HISTORY_ONLY, OPTIMISTIC, PERSISTENCE, TEST_FROM, p_text
-from airaware.server import db
+from airaware.server import db, reports
 from airaware.server.auth import client_ip, current_user, require_user, visitor
 from airaware.server.core import upcoming
 
 router = APIRouter(prefix="/api")
-REPORT_KINDS = {"burning": "Garbage or leaf burning", "construction": "Construction or road dust", "industry": "Factory smoke",
-                "traffic": "Heavy traffic or idling", "firecrackers": "Firecrackers", "other": "Something else"}
+REPORT_KINDS = reports.KINDS
 
 
 def state(request: Request):
@@ -194,7 +193,10 @@ def area(request: Request, response: Response, lat: float = Query(ge=-90, le=90)
     rows = forecast_rows(fc, groups_of(user))
     now = forecast_rows(upcoming(fc).head(1), groups_of(user))[0]
     est = a["estimate"]
-    nearby = nearby_reports(lat, lon, km=3)
+    try:
+        nearby, reports_ok = nearby_reports(lat, lon, km=3), True
+    except reports.Unavailable:
+        nearby, reports_ok = [], False  # the forecast still works; the page says reports are unavailable
     with state(request).lock:
         profile = state(request).profile
     return clean({
@@ -203,7 +205,7 @@ def area(request: Request, response: Response, lat: float = Query(ge=-90, le=90)
         "today": now, "forecast": rows,
         "best_hours": sorted(best_hours(profile, a["city"], date.today().month)["hour"].tolist()),
         "hours": hour_shape(profile, a["city"], pd.Timestamp(now["date"]), now["forecast"]),
-        "weather": weather(lat, lon), "reports": nearby,
+        "weather": weather(lat, lon), "reports": nearby, "reports_available": reports_ok,
     })
 
 
@@ -282,21 +284,31 @@ def track_record(city: str | None = None):
 
 # ---------- citizen reports ----------
 
+def report_unavailable(e: reports.Unavailable) -> HTTPException:
+    return HTTPException(503, "Pollution reports are unavailable right now (their database is offline). Forecasts and maps still work.")
+
+
+def public_report(r: dict) -> dict:
+    """What anyone may see of an approved report: never the author."""
+    return {k: r[k] for k in ("id", "lat", "lon", "kind", "note", "created_at")} | {"label": REPORT_KINDS.get(r["kind"], r["kind"])}
+
+
+def since_days(days: int) -> str:
+    return (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).isoformat(timespec="seconds")
+
+
 def nearby_reports(lat: float, lon: float, km: float = 3, days: int = 7) -> list[dict]:
-    since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).isoformat(timespec="seconds")
-    near = db.rows("""SELECT id, lat, lon, kind, note, created_at FROM reports WHERE status = 'approved' AND created_at >= ?
-                      AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? ORDER BY created_at DESC LIMIT 50""",
-                   (since, lat - km / 111, lat + km / 111, lon - km / 105, lon + km / 105))
-    return [{**r, "label": REPORT_KINDS.get(r["kind"], r["kind"])} for r in near]
+    return [public_report(r) for r in reports.store().near(lat, lon, km, since_days(days))]
 
 
 @router.get("/reports")
 def list_reports(city: str = "Pune", days: int = Query(14, ge=1, le=90)):
     check_city(city)
-    since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).isoformat(timespec="seconds")
-    rs = db.rows("""SELECT id, lat, lon, kind, note, created_at FROM reports
-                    WHERE status = 'approved' AND city = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 300""", (city, since))
-    return [{**r, "label": REPORT_KINDS.get(r["kind"], r["kind"])} for r in rs]
+    try:
+        rs = reports.store().find(reports.Filter(status="approved", city=city, since=since_days(days), limit=300))
+    except reports.Unavailable as e:
+        raise report_unavailable(e)
+    return [public_report(r) for r in rs]
 
 
 class NewReport(BaseModel):
@@ -306,20 +318,57 @@ class NewReport(BaseModel):
     note: str = Field("", max_length=280)
 
 
+class ReportEdit(BaseModel):
+    kind: str = Field(max_length=20)
+    note: str = Field("", max_length=280)
+
+
+def check_kind(kind: str) -> None:
+    if kind not in REPORT_KINDS:
+        raise HTTPException(422, f"kind must be one of {', '.join(REPORT_KINDS)}")
+
+
 @router.post("/reports", status_code=201)
 def create_report(request: Request, body: NewReport, user: dict = Depends(require_user)):
     """A signed-in user reports a pollution source; it shows on the map once an admin approves it."""
     lat, lon, kind, note = body.lat, body.lon, body.kind, body.note.strip()
-    if kind not in REPORT_KINDS:
-        raise HTTPException(422, f"kind must be one of {', '.join(REPORT_KINDS)}")
+    check_kind(kind)
     city, km = live.nearest_city(lat, lon)
     if km > 60:
         raise HTTPException(422, "Reports must be in the Pune or Mumbai area.")
-    recent = db.one("SELECT COUNT(*) AS n FROM reports WHERE user_id = ? AND created_at >= ?",
-                    (user["id"], (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=1)).isoformat(timespec="seconds")))["n"]
-    if recent >= 10:
-        raise HTTPException(429, "That's a lot of reports in an hour. Try again later.")
-    rid = db.run("INSERT INTO reports (user_id, lat, lon, city, kind, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                 (user["id"], lat, lon, city, kind, note[:280], db.now()))
-    db.audit("report.create", user["id"], f"report {rid} {kind} in {city}")
+    store = reports.store()
+    try:
+        hour_ago = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=1)).isoformat(timespec="seconds")
+        if store.recent_count(user["id"], hour_ago) >= 10:
+            raise HTTPException(429, "That's a lot of reports in an hour. Try again later.")
+        rid = store.create(user["id"], lat, lon, city, kind, note[:280])
+    except reports.Unavailable as e:
+        raise report_unavailable(e)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    db.audit("report.create", user["id"], f"report {rid} {kind} in {city} ({store.backend})")
     return {"id": rid, "status": "pending"}
+
+
+@router.patch("/me/reports/{rid}")
+def edit_my_report(rid: str, body: ReportEdit, user: dict = Depends(require_user)):
+    """The author may correct a report while it waits for moderation; once judged it is fixed."""
+    check_kind(body.kind)
+    try:
+        if not reports.store().update_own(rid, user["id"], body.kind, body.note.strip()[:280]):
+            raise HTTPException(404, "No pending report of yours with that id.")
+    except reports.Unavailable as e:
+        raise report_unavailable(e)
+    return {"ok": True}
+
+
+@router.delete("/me/reports/{rid}")
+def delete_my_report(rid: str, user: dict = Depends(require_user)):
+    """The author may withdraw a report at any time (it also leaves the public map)."""
+    try:
+        if not reports.store().delete(rid, user_id=user["id"]):
+            raise HTTPException(404, "No report of yours with that id.")
+    except reports.Unavailable as e:
+        raise report_unavailable(e)
+    db.audit("report.withdraw", user["id"], f"report {rid}")
+    return {"ok": True}

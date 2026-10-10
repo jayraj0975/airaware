@@ -517,3 +517,105 @@ def test_make_admin_from_env_only_bootstraps_the_first_admin(app, monkeypatch):
     monkeypatch.setenv("AIRAWARE_MAKE_ADMIN", "late@example.com")
     server.promote_listed_admins()
     assert db.one("SELECT role FROM users WHERE email = 'late@example.com'")["role"] == "user"
+
+
+# ---------- pollution reports: CRUD, filters, statistics, permissions, the database being offline ----------
+
+def _report(c, lat=18.52, lon=73.85, kind="construction", note=""):
+    return c.post("/api/reports", json={"lat": lat, "lon": lon, "kind": kind, "note": note}, headers=H)
+
+
+def test_report_crud_filters_and_permissions(app):
+    alice, bob, mod = client(app), client(app), client(app)
+    signup(alice, "alice-r@example.com")
+    signup(bob, "bob-r@example.com")
+    signup(mod, "mod-r@example.com")
+    manage.main(["make-admin", "mod-r@example.com"])
+    rid = _report(alice, note="dust from a site").json()["id"]
+    assert _report(alice, lat=28.6, lon=77.2).status_code == 422  # Delhi is outside the coverage
+    assert _report(alice, note="x" * 281).status_code == 422
+    # Update and delete are the author's own business.
+    assert bob.patch(f"/api/me/reports/{rid}", json={"kind": "other", "note": "mine now"}, headers=H).status_code == 404
+    assert bob.delete(f"/api/me/reports/{rid}", headers=H).status_code == 404
+    assert alice.patch(f"/api/me/reports/{rid}", json={"kind": "aliens"}, headers=H).status_code == 422
+    assert alice.patch(f"/api/me/reports/{rid}", json={"kind": "burning", "note": "leaf burning"}, headers=H).status_code == 200
+    assert [r["kind"] for r in alice.get("/api/me/reports").json() if r["id"] == rid] == ["burning"]
+    # Moderation is for admins only.
+    for c in (alice, bob):
+        assert c.get("/api/admin/reports").status_code == 403 and c.get("/api/admin/reports/stats").status_code == 403
+        assert c.patch(f"/api/admin/reports/{rid}", json={"status": "approved"}, headers=H).status_code == 403
+        assert c.delete(f"/api/admin/reports/{rid}", headers=H).status_code == 403
+    assert client(app).get("/api/admin/reports").status_code == 401
+    # Filters, and refusing nonsense.
+    assert any(r["id"] == rid for r in mod.get("/api/admin/reports?status=pending&kind=burning&city=Pune").json())
+    assert not any(r["id"] == rid for r in mod.get("/api/admin/reports?status=all&city=Mumbai").json())
+    today = pd.Timestamp.now(tz="UTC").date().isoformat()
+    assert any(r["id"] == rid for r in mod.get(f"/api/admin/reports?status=all&since={today}&until={today}").json())
+    for bad in ("status=maybe", "kind=aliens", "city=Delhi", "since=yesterday", "until=2026-13-40"):
+        assert mod.get(f"/api/admin/reports?{bad}").status_code == 422, bad
+    assert mod.patch(f"/api/admin/reports/{rid}", json={"status": "deleted"}, headers=H).status_code == 422
+    assert mod.patch("/api/admin/reports/999999", json={"status": "approved"}, headers=H).status_code == 404
+    assert mod.patch(f"/api/admin/reports/{rid}", json={"status": "approved"}, headers=H).status_code == 200
+    public = app.get("/api/reports?city=Pune").json()
+    assert any(r["id"] == rid for r in public) and all("user_id" not in r and "author" not in r for r in public)
+    # Judged: the author can no longer edit it, but can still withdraw it.
+    assert alice.patch(f"/api/me/reports/{rid}", json={"kind": "other", "note": ""}, headers=H).status_code == 404
+    s = mod.get("/api/admin/reports/stats?days=30").json()
+    assert s["by_status"]["approved"] >= 1 and s["backend"] == "sqlite" and any(x["kind"] == "burning" for x in s["by_city_kind"])
+    assert alice.delete(f"/api/me/reports/{rid}", headers=H).status_code == 200
+    assert not any(r["id"] == rid for r in app.get("/api/reports?city=Pune").json())
+    spam = _report(bob, note="buy cheap stuff").json()["id"]
+    assert mod.delete(f"/api/admin/reports/{spam}", headers=H).status_code == 200
+    assert mod.delete(f"/api/admin/reports/{spam}", headers=H).status_code == 404
+    assert any(a["action"] == "admin.report_deleted" for a in mod.get("/api/admin/audit").json())
+
+
+def test_reports_database_offline_is_explicit_and_contained(app, monkeypatch):
+    c, boss = client(app), client(app)
+    signup(c, "offline-user@example.com", password="offline-pass-1")
+    signup(boss, "offline-admin@example.com")
+    manage.main(["make-admin", "offline-admin@example.com"])
+    monkeypatch.setenv("AIRAWARE_MONGO_URL", "mongodb://127.0.0.1:1")  # configured, but nothing listens there
+    r = app.get("/api/reports?city=Pune")
+    assert r.status_code == 503 and "offline" in r.json()["detail"]
+    assert _report(c).status_code == 503 and c.get("/api/me/reports").status_code == 503
+    area = app.get("/api/area?lat=18.52&lon=73.85")  # the forecast still works
+    assert area.status_code == 200 and area.json()["reports"] == [] and area.json()["reports_available"] is False
+    ov = boss.get("/api/admin/overview").json()
+    assert ov["counts"]["reports"] is None and ov["reports_store"] == {"backend": "mongodb", "ok": False, "error": ov["reports_store"]["error"]}
+    assert boss.get("/api/admin/reports").status_code == 503 and boss.get("/api/admin/users").json()[0]["reports"] is None
+    # Export and account deletion refuse rather than silently skipping the reports.
+    assert c.get("/api/me/export").status_code == 503
+    assert c.request("DELETE", "/api/me", json={"email": "offline-user@example.com", "password": "offline-pass-1"}, headers=H).status_code == 503
+    assert c.get("/api/auth/me").json()["user"]["email"] == "offline-user@example.com"
+    monkeypatch.delenv("AIRAWARE_MONGO_URL")
+    assert app.get("/api/reports?city=Pune").status_code == 200  # back on SQLite
+
+
+@pytest.mark.skipif(not os.environ.get("AIRAWARE_TEST_MONGO_URL"), reason="set AIRAWARE_TEST_MONGO_URL for the MongoDB API test")
+def test_report_api_on_a_real_mongodb(app, monkeypatch):
+    import uuid
+    name = f"airaware_api_{uuid.uuid4().hex[:8]}"
+    monkeypatch.setenv("AIRAWARE_MONGO_URL", os.environ["AIRAWARE_TEST_MONGO_URL"])
+    monkeypatch.setenv("AIRAWARE_MONGO_DB", name)
+    from airaware.server import reports
+    reports._store = None
+    try:
+        c, boss = client(app), client(app)
+        signup(c, "mongo-user@example.com", password="mongo-pass-123")
+        signup(boss, "mongo-admin@example.com")
+        manage.main(["make-admin", "mongo-admin@example.com"])
+        rid = _report(c, kind="industry", note="black smoke").json()["id"]
+        assert len(rid) == 24  # a MongoDB ObjectId
+        assert boss.patch(f"/api/admin/reports/{rid}", json={"status": "approved"}, headers=H).status_code == 200
+        assert any(r["id"] == rid for r in app.get("/api/reports?city=Pune").json())
+        assert app.get("/api/area?lat=18.52&lon=73.85").json()["reports"][0]["id"] == rid  # the 2dsphere $nearSphere query
+        s = boss.get("/api/admin/reports/stats").json()
+        assert s["backend"] == "mongodb" and s["by_status"]["approved"] == 1 and s["moderated"] == 1
+        assert boss.get("/api/admin/overview").json()["reports_store"] == {"backend": "mongodb", "ok": True}
+        assert [r["id"] for r in c.get("/api/me/export").json()["reports"]] == [rid]
+        assert c.request("DELETE", "/api/me", json={"email": "mongo-user@example.com", "password": "mongo-pass-123"}, headers=H).status_code == 200
+        assert boss.get(f"/api/admin/reports?status=all").json()[0]["author"] is None  # kept, without the author
+    finally:
+        reports.store().client.drop_database(name)
+        reports._store = None

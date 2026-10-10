@@ -8,3 +8,4 @@ starlette==1.7.0
 streamlit==1.65.0
 tabulate==0.10.0
 uvicorn==0.54.0
+pymongo==4.18.3

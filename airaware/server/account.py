@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from airaware.aqi import HEALTH_GROUPS
 from airaware.data import CITIES
-from airaware.server import auth, db
+from airaware.server import auth, db, reports
 from airaware.server.auth import client_ip, require_user
 from airaware.server.core import check_alerts, send_email, upcoming
 from airaware.server.public import forecast_rows, state
@@ -282,6 +282,11 @@ def export_my_data(request: Request, user: dict = Depends(require_user)):
         raise HTTPException(429, "You have downloaded your data a lot in the last hour. Try again later.")
     uid = user["id"]
     profile = {k: v for k, v in user.items() if k not in ("pw_hash", "totp_secret", "totp_last_step")}
+    try:  # an export must be complete: no silent gaps when the report database is down
+        my_reports = [{k: r[k] for k in ("id", "lat", "lon", "city", "kind", "note", "status", "created_at")}
+                      for r in reports.store().find(reports.Filter(user_id=uid, limit=10000))]
+    except reports.Unavailable:
+        raise HTTPException(503, "Your pollution reports are stored in a database that is offline right now, so this cannot be done completely. Try again in a few minutes.")
     db.audit("user.data_exported", uid, "", client_ip(request))
     return {
         "about": "Your personal data held by AirAware, and why. See /privacy for how each part is used and how long it is kept.",
@@ -294,7 +299,7 @@ def export_my_data(request: Request, user: dict = Depends(require_user)):
         "places": db.rows("SELECT id, name, lat, lon, city, created_at FROM places WHERE user_id = ?", (uid,)),
         "alerts": db.rows("SELECT id, place_id, threshold, active, last_sent, created_at FROM alerts WHERE user_id = ?", (uid,)),
         "notifications": db.rows("SELECT title, body, created_at, read FROM notifications WHERE user_id = ?", (uid,)),
-        "reports": db.rows("SELECT id, lat, lon, city, kind, note, status, created_at FROM reports WHERE user_id = ?", (uid,)),
+        "reports": my_reports,
         "sessions": db.rows("SELECT created_at, expires_at, ip, user_agent FROM sessions WHERE user_id = ?", (uid,)),
         "privacy_requests": db.rows("SELECT kind, message, status, response, created_at, resolved_at FROM privacy_requests WHERE user_id = ?", (uid,)),
         "activity_log": db.rows("SELECT at, action, detail, ip FROM audit WHERE user_id = ? ORDER BY id DESC LIMIT 500", (uid,)),
@@ -333,6 +338,10 @@ def delete_account(body: SignIn, request: Request, response: Response, user: dic
     """Deletes the account and everything it owns. Needs the password again; reports stay, without the author."""
     if body.email.strip().lower() != user["email"].lower() or not recheck_password(user, body.password):
         raise HTTPException(403, "Email or password is not right.")
+    try:  # first, so a report can never point at an id SQLite might later give to someone else
+        reports.store().anonymize_user(user["id"])
+    except reports.Unavailable:
+        raise HTTPException(503, "Your pollution reports are stored in a database that is offline right now, so this cannot be done completely. Try again in a few minutes.")
     db.audit("user.deleted", None, f"user {user['id']} deleted their account", client_ip(request))
     db.run("DELETE FROM users WHERE id = ?", (user["id"],))
     response.delete_cookie(auth.COOKIE, path="/")
@@ -421,4 +430,8 @@ def mark_read(user: dict = Depends(require_user)):
 
 @router.get("/me/reports")
 def my_reports(user: dict = Depends(require_user)):
-    return db.rows("SELECT id, lat, lon, city, kind, note, status, created_at FROM reports WHERE user_id = ? ORDER BY id DESC LIMIT 100", (user["id"],))
+    try:
+        return [{k: r[k] for k in ("id", "lat", "lon", "city", "kind", "note", "status", "created_at")}
+                for r in reports.store().find(reports.Filter(user_id=user["id"], limit=100))]
+    except reports.Unavailable:
+        raise HTTPException(503, "Your pollution reports are unavailable right now (their database is offline).")
