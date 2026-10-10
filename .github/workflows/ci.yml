@@ -7,12 +7,20 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      mongo:   # the MongoDB report store is tested against a real server, not a mock
+        image: mongo:7
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
       - run: pip install -r requirements.txt
-      - run: python -m pytest -q
+      - run: python -m pytest -q -rs
+        env: { AIRAWARE_TEST_MONGO_URL: "mongodb://localhost:27017" }
 
   security:
     runs-on: ubuntu-latest

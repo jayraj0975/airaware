@@ -23,7 +23,7 @@ export default function About() {
       </ul>
 
       <h2>How it works</h2>
-      <p>Readings from 37 CPCB monitoring stations are cleaned and combined with live weather and the Copernicus CAMS particle forecast. A model trained on station data since 2020 forecasts each day's change in AQI; a clicked spot gets an estimate weighted by its distance to nearby stations. The details, and every accuracy number, are on the <Link to="/science">Science</Link> page.</p>
+      <p>Readings from 37 CPCB monitoring stations are cleaned and combined with the weather forecast. A model trained on the stations' history and on weather forecasts as they were actually issued forecasts each day's change in AQI; a clicked spot gets an estimate weighted by its distance to nearby stations. The details, and every accuracy number, are on the <Link to="/science">Science</Link> page.</p>
 
       <h2>Roadmap</h2>
       <ul>

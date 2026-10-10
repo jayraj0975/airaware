@@ -57,6 +57,21 @@ check("other user cannot delete my place", b.delete(f"/api/me/places/{pid}", hea
 check("other user cannot change my alert", b.patch(f"/api/me/alerts/{aid}", json={"active": False}, headers=H).status_code == 404)
 check("other user cannot attach alert to my place", b.post("/api/me/alerts", json={"place_id": pid, "threshold": 100}, headers=H).status_code == 404)
 check("other user does not see my places", all(p["id"] != pid for p in b.get("/api/me/places").json()))
+rid = a.post("/api/reports", json={"lat": 18.52, "lon": 73.85, "kind": "burning", "note": "mine"}, headers=H).json()["id"]
+check("other user cannot edit my report", b.patch(f"/api/me/reports/{rid}", json={"kind": "other", "note": "x"}, headers=H).status_code == 404)
+check("other user cannot withdraw my report", b.delete(f"/api/me/reports/{rid}", headers=H).status_code == 404)
+check("other user does not see my reports", all(x["id"] != rid for x in b.get("/api/me/reports").json()))
+check("pending report not public", all(x["id"] != rid for x in anon.get("/api/reports?city=Pune").json()))
+for path, method in [(f"/api/admin/reports/{rid}", "patch"), (f"/api/admin/reports/{rid}", "delete"), ("/api/admin/reports/stats", "get")]:
+    r = getattr(a, method)(path, headers=H, **({"json": {"status": "approved"}} if method == "patch" else {}))
+    check(f"non-admin cannot {method} {path.split('/')[-1] if 'stats' in path else 'a report'}", r.status_code == 403, str(r.status_code))
+r = a.get("/api/me/reports/../../admin/reports")
+check("report id path tricks do not reach admin", r.status_code in (403, 404, 405), str(r.status_code))
+for junk in ["%7B%22%24ne%22%3A1%7D", "1%20OR%201%3D1", "'%3B--", "0" * 40]:
+    r = b.delete(f"/api/me/reports/{junk}", headers=H)
+    check(f"junk report id is a clean 404 ({junk[:12]})", r.status_code == 404, str(r.status_code))
+r = anon.get("/api/reports?city=Pune&status[$ne]=x")
+check("query operator injection ignored on public reports", r.status_code == 200 and all(x["id"] != rid for x in r.json()))
 for path in ["/api/admin/overview", "/api/admin/users", "/api/admin/audit", "/api/admin/jobs"]:
     check(f"non-admin blocked from {path}", a.get(path).status_code == 403)
 check("anon blocked from admin", anon.get("/api/admin/users").status_code == 401)

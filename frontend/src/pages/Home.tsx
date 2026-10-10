@@ -60,6 +60,7 @@ export default function Home() {
           </div>
           {centre && <AreaMap center={[centre.lat, centre.lon]} stations={st.data?.stations} reports={rp.data ?? []} picked={picked} focus={focus} onPick={(lat, lon) => setPicked({ lat, lon })} />}
           <Legend />
+          {!!rp.error && <p className="small muted">Pollution reports are unavailable right now; the forecast and stations are not affected.</p>}
         </Card>
         <AreaPanel picked={picked} approx={approx} onReported={rp.reload} onShowCity={(c) => {
           // Show that city's own forecast at its centre, labelled as the city: never as the visitor's location.
@@ -242,6 +243,7 @@ function AreaPanel({ picked, approx, onReported, onLoaded, onShowCity }: {
       )}
       <p className="small muted">Last measured here (from {a.measured.used} station{a.measured.used > 1 ? 's' : ''} within 12 km): <b>{fmt(a.measured.aqi)}</b>, {a.measured.category.name}</p>
       <ul className="near">{a.measured.nearest.map((n) => <li key={n.station}>{n.station}: <b>{fmt(n.aqi)}</b> · {n.km} km</li>)}</ul>
+      {a.reports_available === false && <p className="small muted">Reports from people nearby are unavailable right now.</p>}
       {a.reports.length > 0 && <p className="small warn">{a.reports.length} pollution report{a.reports.length > 1 ? 's' : ''} within 3 km this week: {[...new Set(a.reports.map((r) => r.label.toLowerCase()))].join(', ')}.</p>}
       {user ? (
         <div className="actions">
@@ -278,10 +280,10 @@ function ReportButton({ lat, lon, onDone }: { lat: number; lon: number; onDone: 
   }
   return (
     <div className="report-form">
-      <select value={kind} onChange={(e) => setKind(e.target.value)}>
+      <label className="small">What is it?<select value={kind} onChange={(e) => setKind(e.target.value)}>
         {Object.entries(status?.report_kinds ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-      </select>
-      <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={280} placeholder="What did you see? (optional)" />
+      </select></label>
+      <label className="small">Note (optional)<input value={note} onChange={(e) => setNote(e.target.value)} maxLength={280} placeholder="What did you see?" /></label>
       <div className="actions"><button className="btn small" disabled={busy} onClick={send}>Send report</button><button className="ghost small" onClick={() => setOpen(false)}>Cancel</button></div>
     </div>
   )

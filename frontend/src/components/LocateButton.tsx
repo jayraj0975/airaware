@@ -30,7 +30,11 @@ export default function LocateButton({ onFound }: { onFound: (lat: number, lon: 
     const ask = (precise: boolean) => navigator.geolocation.getCurrentPosition(
       (p) => {
         if (!finish()) return
-        onFound(p.coords.latitude, p.coords.longitude, p.coords.accuracy)
+        const { latitude: lat, longitude: lon, accuracy } = p.coords
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+          return toast('Your device returned an impossible position. Search for your area or tap the map instead.', 'error')
+        }
+        onFound(lat, lon, accuracy)
       },
       (e) => {
         if (settled) return

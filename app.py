@@ -9,7 +9,7 @@ import streamlit as st
 from airaware.aqi import ADVICE, CATEGORIES, category
 from airaware.data import STATIONS, build, load, load_hourly, load_stations, save
 from airaware.insights import best_hours, cigarettes, diwali_effect, dominant, station_agreement
-from airaware.model import AIRAWARE, FEATURES, PERSISTENCE, TEST_FROM, explain, forecast_now, train
+from airaware.model import AIRAWARE, PERSISTENCE, TEST_FROM, VWX, explain, forecast_now, train
 
 NAMES = {
     "aqi": "Today's AQI", "aqi_lag1": "Yesterday's AQI", "aqi_lag2": "AQI two days ago", "aqi_7d": "Last 7 days' average AQI",
@@ -23,6 +23,10 @@ NAMES = {
     "cams_pm25": "CAMS PM2.5 today", "cams_pm10": "CAMS PM10 today",
     "cams_pm25_next": "CAMS PM2.5 forecast for tomorrow", "cams_pm10_next": "CAMS PM10 forecast for tomorrow",
 }
+_WX_WORDS = {"temp": "temperature", "humidity": "humidity", "rain": "rain", "wind": "wind speed", "wind_u": "east-west wind",
+             "wind_v": "north-south wind", "pressure": "air pressure"}
+NAMES |= {f"fc_today_{w}": f"Today's {t} (as forecast)" for w, t in _WX_WORDS.items()}
+NAMES |= {f"fc_target_{w}": f"Tomorrow's {t} (as forecast)" for w, t in _WX_WORDS.items()}
 ORDER = [c[1] for c in CATEGORIES]
 DAY = pd.Timedelta(days=1)
 
@@ -132,7 +136,7 @@ with live:
     line = alt.Chart(fc).mark_line(point=True, strokeDash=[5, 3], color="#f58518").encode(
         x="date:T", y="forecast:Q", tooltip=[alt.Tooltip("date:T"), alt.Tooltip("forecast:Q", format=".0f"),
                                              alt.Tooltip("lo:Q", format=".0f"), alt.Tooltip("hi:Q", format=".0f")])
-    st.altair_chart(category_rules() + actual + band + line, use_container_width=True)
+    st.altair_chart(category_rules() + actual + band + line, width="stretch")
     st.caption("Blue: measured. Orange: AirAware's forecast, with the shaded 80% range. On past test days the real AQI "
                "fell inside that range about 86-88% of the time.")
 
@@ -140,7 +144,7 @@ with live:
                       Range=fc["lo"].round().astype(int).astype(str) + "–" + fc["hi"].round().astype(int).astype(str))
     st.dataframe(table[["Day", "days_ahead", "forecast", "Range", "Category", "p_poor"]].round({"forecast": 0}).rename(columns={
         "days_ahead": "Days after last reading", "forecast": "Forecast AQI", "p_poor": "Chance of Poor or worse"}),
-        hide_index=True, use_container_width=True,
+        hide_index=True, width="stretch",
         column_config={"Chance of Poor or worse": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
 
 with replay:
@@ -153,13 +157,15 @@ with replay:
 
     st.subheader("What if tomorrow's weather were different?")
     c1, c2, c3, c4 = st.columns(4)
-    x = row[FEATURES].astype(float).copy()
-    x["temp_next"] = c1.slider("Temperature tomorrow (°C)", 10.0, 40.0, float(round(x["temp_next"], 1)), 0.5,
-                               help="The model's strongest weather input: a warmer day than today usually pushes the forecast up.")
-    x["humidity_next"] = c2.slider("Humidity tomorrow (%)", 10.0, 100.0, float(round(x["humidity_next"])), 1.0)
-    x["rain_next"] = c3.slider("Rain tomorrow (mm)", 0.0, 100.0, float(round(x["rain_next"], 1)), 0.5)
-    x["wind_next"] = c4.slider("Wind tomorrow (km/h)", 0.0, 40.0, float(round(x["wind_next"], 1)), 0.5)
     m = r.model_for(pd.Timestamp(day))
+    x = row[list(m.cols)].astype(float).copy()
+    if "fc_target_temp" in x:  # the served model reads tomorrow's weather as it was forecast that evening
+        val = lambda k, d: float(round(x[k], 1)) if pd.notna(x[k]) else d
+        x["fc_target_temp"] = c1.slider("Temperature tomorrow (°C)", 10.0, 40.0, val("fc_target_temp", 28.0), 0.5,
+                                        help="A strong weather input: a warmer day than today usually pushes the forecast up.")
+        x["fc_target_humidity"] = c2.slider("Humidity tomorrow (%)", 10.0, 100.0, val("fc_target_humidity", 60.0), 1.0)
+        x["fc_target_rain"] = c3.slider("Rain tomorrow (mm)", 0.0, 100.0, val("fc_target_rain", 0.0), 0.5)
+        x["fc_target_wind"] = c4.slider("Wind tomorrow (km/h)", 0.0, 40.0, val("fc_target_wind", 8.0), 0.5)
     xf = x.to_frame().T
     pred = float(m.predict(xf)[0])
     base = float(row["predicted"])
@@ -186,7 +192,7 @@ with replay:
     st.altair_chart(alt.Chart(why).mark_bar().encode(
         x=alt.X("AQI points:Q"), y=alt.Y("Input:N", sort=None, title=None, axis=alt.Axis(labelLimit=260)),
         color=alt.condition("datum['AQI points'] > 0", alt.value("#e45756"), alt.value("#54a24b")),
-        tooltip=["Input", alt.Tooltip("AQI points:Q", format="+.1f")]), use_container_width=True)
+        tooltip=["Input", alt.Tooltip("AQI points:Q", format="+.1f")]), width="stretch")
     st.caption("Red pushes the forecast up (worse air), green pulls it down. Inputs are compared with their usual values, "
                "so an ordinary day contributes little.")
 
@@ -199,7 +205,7 @@ with station_tab:
     st.map(s, latitude="lat", longitude="lon", color="colour", size=600, zoom=10.5 if city == "Pune" else 10)
     st.dataframe(s.sort_values("aqi", ascending=False)[["station", "date", "aqi", "Category", "pm25", "pm10"]].rename(columns={
         "station": "Station", "date": "Day", "aqi": "AQI", "pm25": "PM2.5 (µg/m³)", "pm10": "PM10 (µg/m³)"}).round(0),
-        hide_index=True, use_container_width=True, column_config={"Day": st.column_config.DateColumn(format="DD MMM")})
+        hide_index=True, width="stretch", column_config={"Day": st.column_config.DateColumn(format="DD MMM")})
     if len(s) > 1:
         st.caption(f"Across the city, stations differ by up to {s['aqi'].max() - s['aqi'].min():.0f} AQI points this week: "
                    "the city AQI is an average, and your street may be cleaner or dirtier.")
@@ -209,7 +215,7 @@ with station_tab:
     agree = agree[agree["city"] == city].sort_values("correlation")
     st.dataframe(agree[["station", "verdict", "correlation", "bias", "days"]].rename(columns={
         "station": "Station", "verdict": "Verdict", "correlation": "Moves with the city (correlation)",
-        "bias": "Reads above the city by (AQI)", "days": "Days reporting"}).round(2), hide_index=True, use_container_width=True)
+        "bias": "Reads above the city by (AQI)", "days": "Days reporting"}).round(2), hide_index=True, width="stretch")
     st.caption("Last 90 days, each station against the median of all stations in the city that day. A station that does not rise "
                "and fall with its neighbours (correlation below 0.6) is more likely a faulty or badly placed sensor than "
                "genuinely different air. The city average dilutes any one bad station.")
@@ -224,7 +230,7 @@ with insight_tab:
         color=alt.Color("aqi:Q", title="AQI-equivalent", scale=alt.Scale(scheme="yelloworangered")),
         tooltip=["Month", "hour", alt.Tooltip("aqi:Q", format=".0f"), alt.Tooltip("pm25:Q", format=".0f"), alt.Tooltip("pm10:Q", format=".0f")]
     ).properties(height=360)
-    st.altair_chart(heat, use_container_width=True)
+    st.altair_chart(heat, width="stretch")
     st.caption("Average of every station's hourly PM since January 2025, turned into an AQI-equivalent. In winter the morning "
                "rush hours are the worst and mid-afternoon is the cleanest: cold, still night air traps particles near the ground "
                "until the sun mixes them upward. CPCB's official AQI is a 24-hour value; this only shows the daily rhythm.")
@@ -240,7 +246,7 @@ with insight_tab:
             x=alt.X("offset:Q", title="Days from Diwali", axis=alt.Axis(tickMinStep=1)), y=alt.Y("change:Q", title="AQI above the weeks before"),
             color=alt.Color("city:N", title=None, legend=alt.Legend(orient="bottom")),
             tooltip=["city", "offset", alt.Tooltip("change:Q", format="+.0f")]) + alt.Chart(pd.DataFrame({"x": [0]})).mark_rule(
-            strokeDash=[3, 3]).encode(x="x:Q"), use_container_width=True)
+            strokeDash=[3, 3]).encode(x="x:Q"), width="stretch")
         peak = mean.loc[mean.groupby("city")["change"].idxmax()]
         st.markdown(" · ".join(f"**{r.city}**: peak **{r.change:+.0f}** AQI, {abs(r.offset)} day{'s' if abs(r.offset) != 1 else ''} "
                                f"{'before' if r.offset < 0 else 'after'} Diwali (years: {years[r.city]})" if r.offset else
@@ -259,7 +265,7 @@ with insight_tab:
         st.altair_chart(alt.Chart(share).mark_bar().encode(
             x=alt.X("Month:N", sort=list(pd.date_range("2025-01-01", periods=12, freq="MS").strftime("%b")), axis=alt.Axis(labelAngle=0), title=None),
             y=alt.Y("share:Q", axis=alt.Axis(format="%"), title="Share of days"), color=alt.Color("Particle:N", legend=alt.Legend(orient="bottom")),
-            tooltip=["Month", "Particle", alt.Tooltip("share:Q", format=".0%")]), use_container_width=True)
+            tooltip=["Month", "Particle", alt.Tooltip("share:Q", format=".0%")]), width="stretch")
         st.caption("PM10 (coarse dust from roads and construction) sets the AQI on most days; fine PM2.5 (smoke, combustion) "
                    "takes over more often in winter and around Diwali.")
     with right:
@@ -295,13 +301,13 @@ with explore:
 
     st.subheader("Data coverage")
     cov = ok.groupby([ok["date"].dt.year.rename("year"), "city"]).size().unstack()
-    st.dataframe(cov.rename_axis(None).T, use_container_width=True)
+    st.dataframe(cov.rename_axis(None).T, width="stretch")
     st.caption("City-days with an AQI. A day counts when at least two stations had 16+ valid hours.")
 
 with model:
     st.subheader("Next day: AirAware against simple baselines")
     t = r.table[r.table["City"].isin(["Both", city])]
-    st.dataframe(t.pivot(index="Method", columns="City", values=["MAE", "Category accuracy", "Poor-day recall"]).round(2), use_container_width=True)
+    st.dataframe(t.pivot(index="Method", columns="City", values=["MAE", "Category accuracy", "Poor-day recall"]).round(2), width="stretch")
     st.caption(f"Walk-forward test from {TEST_FROM:%B %Y}: at the start of each month every method is retrained on everything "
                "before it, then forecasts that month. MAE = average error in AQI points. "
                "Poor-day recall = share of days that were actually Poor or worse (AQI > 200) that the method also called Poor or worse.")
@@ -315,10 +321,13 @@ with model:
     hz = r.horizons.replace({AIRAWARE: "AirAware", PERSISTENCE: "Last reading repeated"})
     st.altair_chart(alt.Chart(hz).mark_line(point=True).encode(
         x=alt.X("Days ahead:O", axis=alt.Axis(labelAngle=0)), y=alt.Y("MAE:Q", title="Average error (AQI points)"), color=alt.Color("Method:N", legend=alt.Legend(orient="bottom")),
-        tooltip=["Method", "Days ahead", alt.Tooltip("MAE:Q", format=".1f")]), use_container_width=True)
+        tooltip=["Method", "Days ahead", alt.Tooltip("MAE:Q", format=".1f")]), width="stretch")
     cover = hz[hz["Method"] == "AirAware"].set_index("Days ahead")["80% range coverage"]
-    st.caption(f"Error grows the further ahead AirAware looks, but it stays below the naive forecast at every step. Its 80% ranges "
-               f"contained the real AQI {cover.min():.0%}-{cover.max():.0%} of the time, so they are honest, if slightly cautious.")
+    sig = hz[(hz["Method"] == "AirAware") & (hz["DM p vs persistence"] < 0.05)]["Days ahead"].tolist()
+    st.caption(f"Error grows the further ahead AirAware looks. Its lead over the naive forecast is statistically significant "
+               f"(Diebold-Mariano, p < 0.05) at {', '.join(map(str, sig)) or 'no'} days ahead. Its 80% ranges contained the real "
+               f"AQI {cover.min():.0%}-{cover.max():.0%} of the time. The upper-bound line uses realized weather and CAMS that "
+               "nobody has on the day, so it shows a ceiling, not live accuracy.")
 
     mine = r.test[r.test["city"] == city]
     left, right = st.columns(2)
@@ -335,7 +344,7 @@ with model:
         cm = pd.crosstab(mine["target"].map(lambda v: category(v)[0]).rename("Actual"),
                          mine["predicted"].map(lambda v: category(v)[0]).rename("Forecast"))
         present = [c for c in ORDER if c in cm.index or c in cm.columns]
-        st.dataframe(cm.reindex(index=present, columns=present, fill_value=0), use_container_width=True)
+        st.dataframe(cm.reindex(index=present, columns=present, fill_value=0), width="stretch")
         st.caption("Rows: the category that happened. Columns: the category AirAware forecast. The diagonal is correct.")
 
     st.subheader(f"Forecast against reality, {city}")

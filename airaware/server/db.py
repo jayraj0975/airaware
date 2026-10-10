@@ -110,6 +110,11 @@ CREATE INDEX IF NOT EXISTS places_user ON places(user_id);
 CREATE INDEX IF NOT EXISTS alerts_user ON alerts(user_id);
 CREATE INDEX IF NOT EXISTS notes_user ON notifications(user_id, read);
 CREATE INDEX IF NOT EXISTS reports_status ON reports(status, city, created_at);
+-- A deleted account's id is never given to anyone else: reports (possibly in MongoDB) refer to authors by this id.
+CREATE TABLE IF NOT EXISTS retired_user_ids (id INTEGER PRIMARY KEY);
+CREATE TRIGGER IF NOT EXISTS retire_user_id AFTER DELETE ON users BEGIN
+    INSERT OR IGNORE INTO retired_user_ids (id) VALUES (OLD.id);
+END;
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS audit_action ON audit(action, at);
 """
@@ -144,6 +149,11 @@ MIGRATIONS = [
     ("users", "totp_enabled_at", "TEXT"),        # NULL until the first code is confirmed
     ("users", "totp_last_step", "INTEGER"),      # the last 30-second step used, so a code cannot be replayed
 ]
+
+
+# Use as the id in every INSERT INTO users: higher than any current or deleted account's id. One statement, so two
+# sign-ups at the same moment are serialised by SQLite's write lock rather than racing.
+NEXT_USER_ID = "(SELECT MAX(m) + 1 FROM (SELECT COALESCE(MAX(id), 0) AS m FROM users UNION ALL SELECT COALESCE(MAX(id), 0) FROM retired_user_ids))"
 
 
 def init() -> None:

@@ -21,7 +21,7 @@ def main(argv: list[str]) -> int:
         name = argv[2] if len(argv) > 2 else email.split("@")[0]
         password = getpass.getpass("Password for the admin account: ")
         auth.check_new_password(password)
-        db.run("INSERT INTO users (email, name, pw_hash, role, created_at) VALUES (?, ?, ?, 'admin', ?)",
+        db.run(f"INSERT INTO users (id, email, name, pw_hash, role, created_at) VALUES ({db.NEXT_USER_ID}, ?, ?, ?, 'admin', ?)",
                (email, name, auth.hash_password(password), db.now()))
         db.audit("admin.created_from_cli", None, email)
         print(f"Admin {email} created.")

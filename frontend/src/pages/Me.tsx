@@ -7,7 +7,7 @@ import { Advice, AskDialog, Card, ConfirmDialog, DayStrip, Dialog, Empty, ErrorB
 import { useSession } from '../session'
 import { dateTime, upcoming } from '../util'
 
-interface MyReport { id: number; kind: string; note: string; status: string; created_at: string; city: string }
+interface MyReport { id: string; kind: string; note: string; status: string; created_at: string; city: string }
 
 export default function Me() {
   const { user, city, status, refresh } = useSession()
@@ -55,11 +55,7 @@ export default function Me() {
 
       <div className="grid two">
         <Card title="Your pollution reports" hint="Reports appear on the public map once a moderator approves them">
-          {!reports.data ? <Spinner /> : reports.data.length === 0 ? <Empty>You have not reported anything yet. Click a spot on the <Link to="/">map</Link> and choose “Report pollution here”.</Empty> : (
-            <div className="table-wrap"><table><thead><tr><th>When</th><th>What</th><th>Note</th><th>Status</th></tr></thead>
-              <tbody>{reports.data.map((r) => <tr key={r.id}><td>{dateTime(r.created_at)}</td><td>{status?.report_kinds[r.kind] ?? r.kind}</td><td>{r.note}</td><td><span className={`tag ${r.status}`}>{r.status}</span></td></tr>)}</tbody>
-            </table></div>
-          )}
+          <MyReports reports={reports.data} error={reports.error} reload={reports.reload} />
         </Card>
         <Security />
       </div>
@@ -305,5 +301,57 @@ function TurnOff({ onClose }: { onClose: () => void }) {
         <div className="actions end"><button type="button" className="ghost small" onClick={onClose}>Cancel</button><button className="btn small danger-btn">Turn off</button></div>
       </form>
     </Dialog>
+  )
+}
+
+/** Your own reports: correct one while it waits for a moderator, or withdraw it at any time. */
+function MyReports({ reports, error, reload }: { reports: MyReport[] | null; error: unknown; reload: () => void }) {
+  const { status } = useSession()
+  const [editing, setEditing] = useState<MyReport | null>(null)
+  const [removing, setRemoving] = useState<MyReport | null>(null)
+  const [form, setForm] = useState({ kind: '', note: '' })
+  const [busy, setBusy] = useState(false)
+  if (error) return <ErrorBox error={error} />
+  if (!reports) return <Spinner />
+  if (reports.length === 0) return <Empty>You have not reported anything yet. Click a spot on the <Link to="/">map</Link> and choose “Report pollution”.</Empty>
+  const save = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    try { await api.patch(`/api/me/reports/${editing!.id}`, form); toast('Report updated.'); setEditing(null); reload() }
+    catch (err) { toast((err as Error).message, 'error') } finally { setBusy(false) }
+  }
+  return (
+    <>
+      <div className="table-wrap"><table><thead><tr><th>When</th><th>What</th><th>Note</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
+        <tbody>{reports.map((r) => (
+          <tr key={r.id}>
+            <td>{dateTime(r.created_at)}</td><td>{status?.report_kinds[r.kind] ?? r.kind}</td><td>{r.note}</td>
+            <td><span className={`tag ${r.status}`}>{r.status}</span></td>
+            <td className="row-actions">
+              {r.status === 'pending' && <button className="text-btn" onClick={() => { setForm({ kind: r.kind, note: r.note }); setEditing(r) }}>Edit</button>}
+              <button className="text-btn danger" onClick={() => setRemoving(r)}>Withdraw</button>
+            </td>
+          </tr>))}
+        </tbody>
+      </table></div>
+      {editing && (
+        <Dialog title="Correct your report" onClose={() => setEditing(null)}>
+          <form className="form" onSubmit={save}>
+            <label>What is it?<select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+              {Object.entries(status?.report_kinds ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
+            <label>Note (optional)<textarea maxLength={280} rows={3} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
+            <p className="small muted">You can change a report until a moderator has looked at it. Do not include anyone's personal details.</p>
+            <button className="btn" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+          </form>
+        </Dialog>
+      )}
+      {removing && (
+        <ConfirmDialog title="Withdraw this report?" ok="Withdraw" onClose={() => setRemoving(null)} onConfirm={async () => {
+          try { await api.del(`/api/me/reports/${removing.id}`); toast('Report withdrawn.'); setRemoving(null); reload() } catch (err) { toast((err as Error).message, 'error') }
+        }}>
+          It is deleted for good and leaves the public map if it was shown there.
+        </ConfirmDialog>
+      )}
+    </>
   )
 }

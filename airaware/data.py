@@ -26,6 +26,7 @@ RAW = ROOT / "data" / "raw"
 DAILY_CSV = ROOT / "data" / "daily.csv"
 STATIONS_CSV = ROOT / "data" / "stations.csv"
 HOURLY_CSV = ROOT / "data" / "hourly_profile.csv"
+VINTAGE_CSV = ROOT / "data" / "forecast_vintage.csv"
 COORDS = RAW / "coords.json"
 TZ = "Asia/Kolkata"
 START = "2020-11-14"  # first full day of the IITM stations
@@ -54,6 +55,9 @@ ARCHIVE = "https://openaq-data-archive.s3.amazonaws.com"
 WX_HISTORY = "https://archive-api.open-meteo.com/v1/archive"
 WX_FORECAST = "https://api.open-meteo.com/v1/forecast"
 CAMS_API = "https://air-quality-api.open-meteo.com/v1/air-quality"
+WX_PREVIOUS = "https://previous-runs-api.open-meteo.com/v1/forecast"  # forecasts as issued 1-7 days before
+VINTAGE_START = "2024-06-01"  # the archive of issued forecasts starts in mid-2024
+LEADS = range(1, 8)
 CAMS_START = "2022-08-01"  # first day Open-Meteo serves CAMS for
 WEATHER = ["temperature_2m", "relative_humidity_2m", "precipitation", "wind_speed_10m",
            "wind_direction_10m", "pressure_msl", "boundary_layer_height"]
@@ -221,6 +225,38 @@ def weather_daily(h: pd.DataFrame) -> pd.DataFrame:
     })
 
 
+def weather_vintage(city: str, end: str) -> pd.DataFrame:
+    """Daily weather as it was FORECAST k = 1..7 days before each day, from Open-Meteo's archive of issued runs.
+
+    Column `temp_lead3` on day T is the daily mean of the forecast hours for T, each taken from the run issued three
+    days (72 hours) before that hour. These are the inputs a forecaster actually had, unlike ERA5, which is only
+    known afterwards. Boundary-layer height is not archived, and CAMS has no such archive at all.
+    """
+    lat, lon = CITIES[city]
+    out = []
+    for k in LEADS:
+        names = {w: f"{w}_previous_day{k}" for w in WEATHER if w != "boundary_layer_height"}
+        q = {"latitude": lat, "longitude": lon, "timezone": TZ, "start_date": VINTAGE_START, "end_date": end,
+             "hourly": ",".join(names.values())}
+        h = pd.DataFrame(json.loads(_url(f"{WX_PREVIOUS}?{urllib.parse.urlencode(q)}"))["hourly"])
+        h = h.rename(columns={v: w for w, v in names.items()}).assign(boundary_layer_height=np.nan)
+        h["time"] = pd.to_datetime(h["time"])
+        h = h.set_index("time")
+        daily = weather_daily(h).drop(columns="blh").where(h["temperature_2m"].resample("D").count() >= 18)  # whole days only
+        out.append(daily.add_suffix(f"_lead{k}"))
+    return pd.concat(out, axis=1)
+
+
+def build_vintage() -> pd.DataFrame:
+    end = str(date.today() - timedelta(days=1))
+    out = pd.concat([weather_vintage(city, end).assign(city=city) for city in CITIES]).rename_axis("date").reset_index()
+    return out[["date", "city", *[c for c in out.columns if c not in ("date", "city")]]]
+
+
+def load_vintage() -> pd.DataFrame | None:
+    return pd.read_csv(VINTAGE_CSV, parse_dates=["date"]) if VINTAGE_CSV.exists() else None
+
+
 def build() -> tuple[pd.DataFrame, pd.DataFrame]:
     """One row per city-day from START to six days ahead (future rows carry the weather forecast only)."""
     end = str(date.today() + timedelta(days=6))
@@ -257,6 +293,12 @@ def load_hourly() -> pd.DataFrame:
 
 
 if __name__ == "__main__":
+    import sys
+    if "--vintage" in sys.argv:  # only the archive of issued weather forecasts, for the forecast-vintage evaluation
+        v = build_vintage()
+        v.to_csv(VINTAGE_CSV, index=False, float_format="%.2f")
+        print(f"{v.dropna(subset=['temp_lead1']).shape[0]} city-days of archived forecasts -> {VINTAGE_CSV}")
+        sys.exit()
     df, st, profile = build()
     save(df, st, profile)
     ok = df.dropna(subset=["aqi"])
