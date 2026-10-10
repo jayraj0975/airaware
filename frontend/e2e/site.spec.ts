@@ -283,3 +283,20 @@ test('no page scrolls sideways on a phone', async ({ page }, info) => {
     expect(over, path).toBeLessThanOrEqual(0)
   }
 })
+
+test('dialogs take keyboard focus, keep Tab inside, and give focus back', async ({ page }) => {
+  await signUp(page, 'Keys', 'e2e-keyboard-pass')
+  await page.request.post('/api/reports', { headers: { 'X-AirAware': '1' }, data: { lat: 18.52, lon: 73.85, kind: 'burning', note: 'keyboard check' } })
+  await page.goto('/me')
+  const opener = page.locator('tr', { hasText: 'keyboard check' }).getByRole('button', { name: 'Withdraw' })
+  await opener.focus()
+  await page.keyboard.press('Enter')
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  const inside = () => page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]'))
+  expect(await inside()).toBe(true)
+  for (let i = 0; i < 6; i++) { await page.keyboard.press('Tab'); expect(await inside()).toBe(true) }
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
+})

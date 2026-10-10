@@ -1,4 +1,4 @@
-import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
+import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { Category, ForecastDay, Personal } from '../api'
 import { AQI_BANDS, dayName, fmt } from '../util'
@@ -152,9 +152,28 @@ export function Dialog({ title, children, onClose }: { title: string; children: 
     window.addEventListener('keydown', esc)
     return () => window.removeEventListener('keydown', esc)
   }, [onClose])
+  // Keyboard users land inside the dialog (its first field, else the dialog itself, never a destructive button),
+  // Tab stays inside while it is open, and focus returns to whatever opened it.
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    const el = box.current!
+    const focusable = () => [...el.querySelectorAll<HTMLElement>('input, select, textarea, button, a[href], [tabindex]:not([tabindex="-1"])')].filter((x) => !x.hasAttribute('disabled'))
+    ;(el.querySelector<HTMLElement>('input, select, textarea') ?? el).focus()
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const f = focusable()
+      if (!f.length) return
+      const [first, last] = [f[0], f[f.length - 1]]
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === el)) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    el.addEventListener('keydown', trap)
+    return () => { el.removeEventListener('keydown', trap); opener?.focus?.() }
+  }, [])
   return createPortal(
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-label={title} ref={box} tabIndex={-1}>
         <div className="dialog-head"><h2>{title}</h2><button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><Icon name="close" /></button></div>
         {children}
       </div>
