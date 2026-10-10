@@ -11,10 +11,10 @@ DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as
 
 | | |
 |---|---|
-| Next-day error | **10.4 AQI** vs 12.4 for "tomorrow = today" (16% better, Diebold-Mariano p < 0.001) |
-| Right AQI category | **83%** of days vs 77% |
-| 5 days ahead | 18.1 vs 25.3 (29% better) |
-| 80% forecast ranges | held the real AQI 85-88% of the time |
+| Next-day error (using target-day weather/CAMS inputs) | 10.4 AQI vs 12.4 for persistence; historical test inputs are not archived forecast vintages |
+| Next-day error without target-day weather/CAMS | **12.24 AQI** vs 12.42 persistence (about 1.4% lower MAE) |
+| Category accuracy with target-day inputs | 82.6%; treat as an optimistic historical estimate, not a live-forecast guarantee |
+| 5-day error with target-day inputs | 18.1 vs 25.3 persistence; historical test inputs are not archived forecast vintages |
 
 ![Today: the forecast, today hour by hour, and any area on the map](docs/screenshots/home.png)
 
@@ -184,7 +184,9 @@ February 2025 to October 2026. That gives about 1,460 city-days with an AQI.
 
 ## Method
 
-Each row is one city on one evening D. The features are what is known that evening:
+Each row is one city on one evening D. The intended features are what is known that evening, but the historical archive does not preserve the weather/CAMS forecast vintage that would have been available on D. Consequently, the target-day weather/CAMS experiment below is not a fully leakage-safe simulation of real-time forecasting: it uses historical weather/CAMS values that can be more accurate than forecasts available at issuance time. The ablation without target-day weather/CAMS is the more conservative historical comparison until archived forecast-vintage data is available.
+
+The feature groups are:
 
 - today's AQI, PM2.5 and PM10, yesterday's and the day before's AQI, and the 7-day average;
 - today's weather and **the target day's weather**; at forecast time that comes from a weather forecast;
@@ -214,8 +216,7 @@ target had already been measured, and then forecasts that month. This covers 660
 MAE is in AQI points. Poor-day recall is the share of days that were actually Poor or worse (AQI > 200) that the
 method also called Poor or worse.
 
-**Is the gain real?** A Diebold-Mariano test (absolute error, Newey-West variance over 7 days because daily errors are
-autocorrelated) gives statistic −5.37, p < 0.001: AirAware's lower error is statistically significant.
+**Statistical caveat.** The reported Diebold-Mariano test (absolute error, Newey-West variance over 7 days) compares the target-day-input model with persistence on this historical dataset. Its p-value does not correct for the unavailable forecast vintages, so it cannot establish that the same improvement will hold in real-time operation. The no-target-day-input ablation has MAE 12.245 versus persistence 12.422; that modest difference should not be described as a proven statistically significant live gain.
 
 **Further ahead.** The same walk-forward test for each horizon, against repeating the last reading:
 
@@ -261,8 +262,7 @@ What this shows:
 
 - The training data is small and has a gap: no usable data for 2023–2024.
 - City AQI is a station average, so it shifts a little as stations go offline and come back.
-- The test uses actual (ERA5) weather and the CAMS analysis in place of their forecasts, so real-time accuracy will be
-  a little worse, more so several days ahead where those forecasts are less accurate.
+- The main historical experiment uses actual/reanalysis weather and CAMS analysis values for target days instead of archived forecast vintages. This can make the headline accuracy optimistic, especially at longer horizons. The no-target-day-input ablation is a more conservative check, but it is not a substitute for evaluation with archived forecasts.
 - Live forecasts mix two weather sources: ERA5 for the past, Open-Meteo's forecast model for the last few days and the week ahead.
 - The AQI is computed from PM only, not CPCB's official multi-pollutant AQI. The two agree on most days.
 - Without an OpenAQ key the archive runs about four days behind, so "tomorrow" is really a 5-day-ahead forecast from
