@@ -60,6 +60,7 @@ export default function Home() {
           </div>
           {centre && <AreaMap center={[centre.lat, centre.lon]} stations={st.data?.stations} reports={rp.data ?? []} picked={picked} focus={focus} onPick={(lat, lon) => setPicked({ lat, lon })} />}
           <Legend />
+          {!!rp.error && <p className="small muted">Pollution reports are unavailable right now; the forecast and stations are not affected.</p>}
         </Card>
         <AreaPanel picked={picked} approx={approx} onReported={rp.reload} onShowCity={(c) => {
           // Show that city's own forecast at its centre, labelled as the city: never as the visitor's location.
@@ -242,6 +243,7 @@ function AreaPanel({ picked, approx, onReported, onLoaded, onShowCity }: {
       )}
       <p className="small muted">Last measured here (from {a.measured.used} station{a.measured.used > 1 ? 's' : ''} within 12 km): <b>{fmt(a.measured.aqi)}</b>, {a.measured.category.name}</p>
       <ul className="near">{a.measured.nearest.map((n) => <li key={n.station}>{n.station}: <b>{fmt(n.aqi)}</b> · {n.km} km</li>)}</ul>
+      {a.reports_available === false && <p className="small muted">Reports from people nearby are unavailable right now.</p>}
       {a.reports.length > 0 && <p className="small warn">{a.reports.length} pollution report{a.reports.length > 1 ? 's' : ''} within 3 km this week: {[...new Set(a.reports.map((r) => r.label.toLowerCase()))].join(', ')}.</p>}
       {user ? (
         <div className="actions">
