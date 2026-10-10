@@ -2,6 +2,8 @@
 
 Walk-forward test: at the start of each month from October 2025, every method is retrained on everything before that month and forecasts it. 660 city-day forecasts, up to 05 Oct 2026. Lower MAE/RMSE is better.
 
+**Important evaluation limitation:** the historical dataset does not retain the weather/CAMS forecast vintage available on each forecast date. Target-day weather/CAMS columns therefore use realized/reanalysis values in this backtest and may make the full-feature scores optimistic. Treat “AirAware without tomorrow's forecasts” as the more conservative ablation (MAE 12.245) until evaluation can be repeated with archived forecast vintages. The reported significance test does not correct this limitation.
+
 ## Both cities
 
 | Method                                    |    MAE |   RMSE |    R2 |   Category accuracy |   Poor-day recall |
