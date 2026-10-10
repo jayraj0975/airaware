@@ -473,6 +473,9 @@ def test_forwarded_address_trusted_only_from_the_proxy(monkeypatch):
     assert auth.client_ip(req("100.64.3.9", edge)) == "198.51.100.7"
     assert auth.client_ip(req("8.8.8.8", edge)) == "8.8.8.8"
     assert auth.client_ip(req("not-an-ip", edge)) == "not-an-ip"
+    assert auth.client_ip(req("100.64.3.9", {"x-real-ip": "198.51.100.7:51234"})) == "198.51.100.7"
+    assert auth.client_ip(req("100.64.3.9", {"x-real-ip": "[2001:db8::1]:443"})) == "2001:db8::1"
+    assert auth.client_ip(req("100.64.3.9", {"x-real-ip": "garbage, or empty"})) == "100.64.3.9"
 
 
 def test_rebuild_clock_survives_restarts(app):

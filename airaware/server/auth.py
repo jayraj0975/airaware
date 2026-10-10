@@ -113,9 +113,23 @@ def client_ip(request: Request) -> str:
         named = os.environ.get("AIRAWARE_CLIENT_IP_HEADER", "").strip().lower()
         real = request.headers.get(named, "") if named else (
             request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0])
-        if real.strip():
-            return real.strip()[:64]
+        if address(real):
+            return address(real)
     return host
+
+
+def address(value: str) -> str | None:
+    """The IP address in a proxy header value, without a port ("1.2.3.4:5678", "[2001:db8::1]:443"); None if it is not
+    one. Anything else must never become a rate-limit key: a value unique per connection would void every limit."""
+    v = value.strip()
+    if v.startswith("["):
+        v = v[1:].split("]")[0]
+    elif v.count(":") == 1:
+        v = v.split(":")[0]
+    try:
+        return str(ipaddress.ip_address(v))
+    except ValueError:
+        return None
 
 
 def via_https(request: Request) -> bool:
