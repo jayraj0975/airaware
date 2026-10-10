@@ -35,6 +35,10 @@ def sub_index(pollutant: str, conc: float) -> float:
 
 
 def category(value: float) -> tuple[str, str]:
+    # The category of the number people see: AQI is reported as a whole number (half up, as the browser rounds), so
+    # a forecast of 100.4 shows as 100 and must read Satisfactory, not Moderate.
+    if math.isfinite(value):
+        value = math.floor(value + 0.5)
     for upper, name, colour in CATEGORIES:
         if value <= upper:
             return name, colour

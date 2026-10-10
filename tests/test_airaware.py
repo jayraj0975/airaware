@@ -22,6 +22,7 @@ def test_categories():
     assert category(50)[0] == "Good"
     assert category(51)[0] == "Satisfactory"
     assert category(150)[0] == "Moderate"
+    assert category(100.4)[0] == "Satisfactory" and category(100.5)[0] == "Moderate"  # category of the shown number
     assert category(450)[0] == "Severe"
     assert list(category_index(np.array([10, 75, 150, 250, 350, 450]))) == [0, 1, 2, 3, 4, 5]
 
