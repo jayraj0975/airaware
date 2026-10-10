@@ -466,6 +466,13 @@ def test_forwarded_address_trusted_only_from_the_proxy(monkeypatch):
     assert auth.client_ip(req("10.0.0.9", {"cf-connecting-ip": "203.0.113.5"})) == "10.0.0.9"  # forged header ignored
     assert auth.via_https(req("172.30.0.20", {"x-forwarded-proto": "https"}))
     assert not auth.via_https(req("10.0.0.9", {"x-forwarded-proto": "https"}))
+    # A host's edge network (Railway): trust a range, and read only the header that edge sets.
+    monkeypatch.setenv("AIRAWARE_TRUSTED_PROXIES", "100.64.0.0/10")
+    monkeypatch.setenv("AIRAWARE_CLIENT_IP_HEADER", "X-Real-IP")
+    edge = {"x-real-ip": "198.51.100.7", "cf-connecting-ip": "203.0.113.5", "x-forwarded-for": "203.0.113.6"}
+    assert auth.client_ip(req("100.64.3.9", edge)) == "198.51.100.7"
+    assert auth.client_ip(req("8.8.8.8", edge)) == "8.8.8.8"
+    assert auth.client_ip(req("not-an-ip", edge)) == "not-an-ip"
 
 
 def test_rebuild_clock_survives_restarts(app):

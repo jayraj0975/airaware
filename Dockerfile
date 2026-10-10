@@ -14,13 +14,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY airaware airaware
-COPY data/*.csv data/
+# Starting data, copied into the data volume on first start (a fresh Railway or Docker volume is empty).
+COPY data/*.csv seed/
 COPY --from=frontend /frontend/dist frontend/dist
-RUN useradd --create-home airaware && chown -R airaware /app
+RUN mkdir data && useradd --create-home airaware && chown -R airaware /app
 USER airaware
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"
 # data/ holds the database and refreshed data: mount it as a volume so they survive restarts.
 # No access log: it would record every looked-up location next to the visitor's IP (see the Privacy Notice).
-CMD ["uvicorn", "airaware.server.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header", "--no-access-log"]
+CMD ["sh", "-c", "[ -f data/daily.csv ] || cp -a seed/. data/; exec uvicorn airaware.server.app:app --host 0.0.0.0 --port 8000 --no-server-header --no-access-log"]

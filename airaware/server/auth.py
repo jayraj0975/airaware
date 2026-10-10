@@ -90,25 +90,37 @@ def end_all_sessions(user_id: int) -> None:
     db.run("UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL", (db.now(), user_id))
 
 
-def trusted_proxies() -> set[str]:
-    """Addresses of reverse proxies we sit behind (e.g. the Cloudflare tunnel container), from AIRAWARE_TRUSTED_PROXIES."""
-    return {p.strip() for p in os.environ.get("AIRAWARE_TRUSTED_PROXIES", "").split(",") if p.strip()}
+def trusted_proxies() -> list:
+    """Reverse proxies we sit behind (the Cloudflare tunnel container, or a host's edge network such as Railway's), from
+    AIRAWARE_TRUSTED_PROXIES: comma-separated addresses or networks."""
+    return [ipaddress.ip_network(p.strip(), strict=False) for p in os.environ.get("AIRAWARE_TRUSTED_PROXIES", "").split(",") if p.strip()]
+
+
+def from_proxy(request: Request) -> bool:
+    try:
+        host = ipaddress.ip_address(request.client.host) if request.client else None
+    except ValueError:
+        return False
+    return host is not None and any(host in n for n in trusted_proxies())
 
 
 def client_ip(request: Request) -> str:
-    """The visitor's address. Behind a trusted proxy, the address it reports (CF-Connecting-IP, else the first
-    X-Forwarded-For entry); from anyone else those headers are ignored, so they cannot be forged to dodge limits."""
+    """The visitor's address. Behind a trusted proxy, the address it reports: the header named in
+    AIRAWARE_CLIENT_IP_HEADER (e.g. x-real-ip on Railway), else CF-Connecting-IP, else the first X-Forwarded-For entry.
+    From anyone else those headers are ignored, so they cannot be forged to dodge limits."""
     host = request.client.host if request.client else "?"
-    if host in trusted_proxies():
-        real = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        if real:
-            return real[:64]
+    if from_proxy(request):
+        named = os.environ.get("AIRAWARE_CLIENT_IP_HEADER", "").strip().lower()
+        real = request.headers.get(named, "") if named else (
+            request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0])
+        if real.strip():
+            return real.strip()[:64]
     return host
 
 
 def via_https(request: Request) -> bool:
     return request.url.scheme == "https" or (
-        request.client is not None and request.client.host in trusted_proxies() and request.headers.get("x-forwarded-proto") == "https")
+        from_proxy(request) and request.headers.get("x-forwarded-proto") == "https")
 
 
 def current_user(request: Request) -> dict | None:
