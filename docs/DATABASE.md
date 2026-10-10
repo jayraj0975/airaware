@@ -66,6 +66,12 @@ counts by status (`$group`), reports and approvals by city and kind (`$group` wi
 (`$dateTrunc` to Monday-starting weeks) and the median time to moderate (`$subtract` of two dates, `$median`). The
 admin console shows them under "Reports, last 90 days".
 
+**Author ids are never reused.** Reports in MongoDB refer to their author by SQLite user id, and MongoDB has no foreign
+key to clear that reference. SQLite normally reuses the highest id after it is deleted, so a new account could
+inherit a deleted account's reports. A trigger records every deleted id in `retired_user_ids`, and new accounts take
+an id above every current and retired one. Account deletion also anonymises the reports first. (Ids deleted before
+this trigger existed are not known; that only matters for a database that already used MongoDB before this change.)
+
 **Access control** is enforced in the API, not the database: sign-in for creating, the author's id in the filter for
 editing and withdrawing (so another user's id simply matches nothing), and the admin role plus two-step sign-in for
 moderation and statistics. The public listing never returns `user_id`.

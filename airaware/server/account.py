@@ -97,8 +97,8 @@ def signup(body: SignUp, request: Request, response: Response):
     if not db.take("signup", ip, SIGNUPS_PER_HOUR, 60):
         raise HTTPException(429, "Too many new accounts from this network. Try again in an hour.")
     try:  # every sign-up is a plain user; admins are promoted from the server CLI (see auth.py)
-        uid = db.run("""INSERT INTO users (email, name, pw_hash, city, created_at, terms_version, consent_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        uid = db.run(f"""INSERT INTO users (id, email, name, pw_hash, city, created_at, terms_version, consent_at)
+                         VALUES ({db.NEXT_USER_ID}, ?, ?, ?, ?, ?, ?, ?)""",
                      (email, body.name.strip(), auth.hash_password(body.password), body.city, db.now(), auth.POLICY_VERSION, db.now()))
     except sqlite3.IntegrityError:
         raise HTTPException(409, "An account with that email already exists. Sign in instead.")

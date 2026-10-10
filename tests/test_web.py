@@ -619,3 +619,19 @@ def test_report_api_on_a_real_mongodb(app, monkeypatch):
     finally:
         reports.store().client.drop_database(name)
         reports._store = None
+
+
+def test_a_deleted_accounts_id_is_never_reused(app):
+    """Reports in MongoDB refer to authors by SQLite id, with no foreign key to clear them, so a new account must never
+    inherit a deleted one's id (SQLite reuses the highest id after it is deleted unless told otherwise)."""
+    c = client(app)
+    signup(c, "last-in@example.com", password="last-in-pass-1")
+    old_id = db.one("SELECT id FROM users WHERE email = 'last-in@example.com'")["id"]
+    assert old_id == db.one("SELECT MAX(id) AS m FROM users")["m"]  # the highest id: exactly the case SQLite would reuse
+    assert c.request("DELETE", "/api/me", json={"email": "last-in@example.com", "password": "last-in-pass-1"}, headers=H).status_code == 200
+    assert db.one("SELECT COUNT(*) AS n FROM retired_user_ids WHERE id = ?", (old_id,))["n"] == 1
+    signup(client(app), "next-in@example.com")
+    assert db.one("SELECT id FROM users WHERE email = 'next-in@example.com'")["id"] > old_id
+    db.run("DELETE FROM users WHERE email = 'next-in@example.com'")  # any deletion path retires the id (a trigger)
+    signup(client(app), "third-in@example.com")
+    assert db.one("SELECT id FROM users WHERE email = 'third-in@example.com'")["id"] > old_id + 1
