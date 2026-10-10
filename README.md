@@ -5,6 +5,8 @@
 particle forecast. People sign up to save their places, get advice tuned to their health and an alert before a bad
 day, and report pollution sources; admins moderate reports, manage users and watch the data pipeline.
 
+**Live: [airaware-production-8299.up.railway.app](https://airaware-production-8299.up.railway.app)** · installable on a phone as an app.
+
 DS/ML mini project (fits *Weather Data Analysis and Prediction System*) built as a portfolio product.
 
 | | |
