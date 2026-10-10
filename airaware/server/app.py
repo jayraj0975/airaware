@@ -25,11 +25,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 
 def promote_listed_admins() -> None:
-    """For hosts without a shell (Railway): promotes accounts that already exist, like `manage make-admin`. Set
-    AIRAWARE_MAKE_ADMIN only after the owner has signed up (the site does not verify email ownership), then remove it."""
+    """For hosts without a shell (Railway): makes the FIRST admin from an account that already exists, like `manage
+    make-admin`. It does nothing once any admin exists, and never promotes the same email twice, so a forgotten
+    variable cannot re-promote a demoted admin or hand admin to whoever re-registers a deleted account's email.
+    Set AIRAWARE_MAKE_ADMIN only after the owner has signed up (the site does not verify email ownership)."""
+    if db.one("SELECT 1 AS x FROM users WHERE role = 'admin' LIMIT 1"):
+        return
     for email in filter(None, (e.strip().lower() for e in os.environ.get("AIRAWARE_MAKE_ADMIN", "").split(","))):
-        if db.run("UPDATE users SET role = 'admin' WHERE email = ? AND role != 'admin'", (email,)):
-            db.audit("admin.promoted", None, f"{email} made admin from AIRAWARE_MAKE_ADMIN", "startup")
+        note = f"{email} made admin from AIRAWARE_MAKE_ADMIN"
+        if db.one("SELECT 1 AS x FROM audit WHERE action = 'admin.promoted' AND detail = ? LIMIT 1", (note,)):
+            continue
+        if db.run("UPDATE users SET role = 'admin' WHERE email = ?", (email,)):
+            db.audit("admin.promoted", None, note, "startup")
 
 
 @asynccontextmanager

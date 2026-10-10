@@ -497,9 +497,21 @@ def test_link_previews_use_a_safe_absolute_origin(app, monkeypatch, tmp_path):
     assert "<script>" not in app.get("/").text
 
 
-def test_make_admin_from_env_promotes_only_existing_accounts(app, monkeypatch):
+def test_make_admin_from_env_only_bootstraps_the_first_admin(app, monkeypatch):
+    for row in db.rows("SELECT id FROM users WHERE role = 'admin'"):   # earlier tests may have made admins
+        db.run("UPDATE users SET role = 'user' WHERE id = ?", (row["id"],))
     signup(app, "owner@example.com")
     monkeypatch.setenv("AIRAWARE_MAKE_ADMIN", " Owner@example.com , nobody@example.com")
     server.promote_listed_admins()
     assert db.one("SELECT role FROM users WHERE email = 'owner@example.com'")["role"] == "admin"
     assert db.one("SELECT COUNT(*) AS n FROM users WHERE email = 'nobody@example.com'")["n"] == 0
+    # Demoted (no admin left) with the variable still set: a restart must not promote that email again.
+    db.run("UPDATE users SET role = 'user' WHERE email = 'owner@example.com'")
+    server.promote_listed_admins()
+    assert db.one("SELECT role FROM users WHERE email = 'owner@example.com'")["role"] == "user"
+    # Once any admin exists, nobody else is promoted by the variable.
+    signup(app, "late@example.com")
+    db.run("UPDATE users SET role = 'admin' WHERE email = 'owner@example.com'")
+    monkeypatch.setenv("AIRAWARE_MAKE_ADMIN", "late@example.com")
+    server.promote_listed_admins()
+    assert db.one("SELECT role FROM users WHERE email = 'late@example.com'")["role"] == "user"

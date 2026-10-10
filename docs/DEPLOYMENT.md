@@ -51,8 +51,8 @@ Railway runs the same Dockerfile, always on, at a fixed address, and redeploys o
   `AIRAWARE_TRUSTED_PROXIES=100.64.0.0/10` and `AIRAWARE_CLIENT_IP_HEADER=x-real-ip`. Railway's edge connects from
   addresses in 100.64.0.0/10 and overwrites `X-Real-IP` with the visitor's address (checked: a forged value is
   replaced), so limits apply per visitor. Without these two, each connection would count as a new visitor.
-- Making an admin without a shell: sign up on the site first, then set `AIRAWARE_MAKE_ADMIN=you@example.com`; the
-  next start promotes that existing account. Remove the variable afterwards. Admins still need two-step sign-in.
+- Making the first admin without a shell: sign up on the site first, then set `AIRAWARE_MAKE_ADMIN=you@example.com`; the
+  next start promotes that existing account, only while no admin exists and only once per email. Remove it afterwards.
 - Needs about 1 GB of memory while retraining, so plan for Railway's Hobby plan rather than the trial credit.
 
 ## Local development
