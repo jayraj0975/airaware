@@ -18,7 +18,7 @@ import pandas as pd
 
 from airaware import live
 from airaware.aqi import category, personal_advice
-from airaware.data import STATIONS, build, load, load_hourly, load_stations, save
+from airaware.data import STATIONS, build, load, load_hourly, load_stations, save, VINTAGE_CSV, build_vintage
 from airaware.model import forecast_now, train
 from airaware.server import db
 
@@ -216,6 +216,10 @@ def run_job(kind: str, fn) -> bool:
 def rebuild(state: State) -> str:
     daily, stations, profile = build()
     save(daily, stations, profile)
+    try:  # the archive of issued weather forecasts; on failure the last good copy keeps serving
+        build_vintage().to_csv(VINTAGE_CSV, index=False, float_format="%.2f")
+    except Exception:
+        log.exception("could not refresh the archive of issued forecasts; keeping the last copy")
     state.load()
     last = daily.dropna(subset=["aqi"])["date"].max()
     return f"{len(daily.dropna(subset=['aqi']))} city-days, latest reading {last:%d %b %Y}; models retrained"

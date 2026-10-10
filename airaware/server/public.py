@@ -15,7 +15,7 @@ from airaware import live
 from airaware.aqi import ADVICE, CATEGORIES, HEALTH_GROUPS, category, personal_advice
 from airaware.data import CITIES, STATIONS
 from airaware.insights import best_hours, cigarettes, diwali_effect, dominant, station_agreement
-from airaware.model import AIRAWARE, PERSISTENCE, TEST_FROM, p_text
+from airaware.model import AIRAWARE, HISTORY_ONLY, OPTIMISTIC, PERSISTENCE, TEST_FROM, p_text
 from airaware.server import db
 from airaware.server.auth import client_ip, current_user, require_user, visitor
 from airaware.server.core import upcoming
@@ -224,10 +224,12 @@ def model_api(request: Request):
     by_city = r.table.pivot(index="Method", columns="City", values="MAE").reset_index()
     return clean({
         "test_from": TEST_FROM.date().isoformat(), "forecasts": len(r.test), "airaware": AIRAWARE, "persistence": PERSISTENCE,
+        "history_only": HISTORY_ONLY, "optimistic": OPTIMISTIC, "vintage": r.vintage,
         "table": records(both.rename(columns={"Category accuracy": "category_accuracy", "Poor-day recall": "poor_recall"})),
         "by_city": records(by_city),
         "dm": {"statistic": r.dm[0], "p": r.dm[1], "text": p_text(r.dm[1])},
-        "horizons": records(r.horizons.rename(columns={"Days ahead": "h", "80% range coverage": "coverage"})),
+        "dm_history": {"statistic": r.dm_history[0], "p": r.dm_history[1], "text": p_text(r.dm_history[1])},
+        "horizons": records(r.horizons.rename(columns={"Days ahead": "h", "80% range coverage": "coverage", "DM p vs persistence": "dm_p"})),
         "importance": [{"feature": f, "value": v} for f, v in r.importance.head(12).items()],
     })
 

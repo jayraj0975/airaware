@@ -19,7 +19,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from airaware.aqi import CATEGORIES
-from airaware.data import load
+from airaware.data import load, load_vintage
 
 REPORT = Path(__file__).resolve().parent.parent / "reports" / "metrics.md"
 WX = ["temp", "humidity", "rain", "wind", "wind_u", "wind_v", "pressure", "blh"]
@@ -29,17 +29,29 @@ DIWALI = pd.to_datetime(["2020-11-14", "2021-11-04", "2022-10-24", "2023-11-12",
 TODAY = ["aqi", "aqi_lag1", "aqi_lag2", "aqi_7d", "pm25", "pm10", *WX, *CAMS, "doy_sin", "doy_cos", "weekday", "diwali", "mumbai"]
 FORECAST = [w + "_next" for w in WX + CAMS]
 FEATURES = TODAY + FORECAST
+# The conservative benchmark: only what the stations measured and the calendar. No weather, no CAMS, so no input can
+# be more accurate in this backtest than it would have been on the day.
+HISTORY = ["aqi", "aqi_lag1", "aqi_lag2", "aqi_7d", "pm25", "pm10", "doy_sin", "doy_cos", "weekday", "diwali", "mumbai"]
+# Weather as actually forecast at the time (Open-Meteo's archive of issued runs; no boundary-layer height, no CAMS).
+VWX = ["temp", "humidity", "rain", "wind", "wind_u", "wind_v", "pressure"]
+VINTAGE = HISTORY + [f"fc_today_{w}" for w in VWX] + [f"fc_target_{w}" for w in VWX]
+MAX_LEAD = 7  # the archive keeps runs up to 7 days old; the target-day forecast needs lead h + 1
 # Days ahead. The public archive runs about four days behind, so "tomorrow" is usually five days after the last reading.
 HORIZONS = range(1, 8)
 
 
-def features(daily: pd.DataFrame, h: int = 1) -> pd.DataFrame:
+def features(daily: pd.DataFrame, h: int = 1, vintage: pd.DataFrame | None = None) -> pd.DataFrame:
     """One row per city and day D: what is known by the evening of D, plus the target AQI of D+h.
 
-    The `_next` columns are the weather on the target day D+h (a weather forecast at prediction time).
+    The `_next` columns are the weather on the target day D+h. In this archive they are the REALIZED weather
+    (ERA5) and CAMS analysis, which nobody had on day D, so they can only give an optimistic backtest.
+    With `vintage`, the `fc_` columns are weather as it was actually forecast: today's from the run issued a day
+    before, the target day's from runs issued h + 1 days before it (so issued on D - 1, before the forecast is made).
     Lags use calendar days, so a missing reading stays missing instead of borrowing an older one.
     """
     out = []
+    if vintage is not None:
+        vintage = vintage.set_index(["city", "date"])
     for city, d in daily.groupby("city"):
         d = d.set_index("date").asfreq("D").assign(city=city)
         f = d[["city", "aqi", "pm25", "pm10", *WX, *CAMS]].copy()
@@ -53,6 +65,12 @@ def features(daily: pd.DataFrame, h: int = 1) -> pd.DataFrame:
         f["diwali"] = [int(np.abs((DIWALI - t).days).min() <= 3) for t in nxt]
         f["mumbai"] = int(city == "Mumbai")
         f["target"] = d["aqi"].shift(-h)
+        if vintage is not None:
+            v = vintage.loc[city].reindex(d.index) if city in vintage.index.get_level_values(0) else pd.DataFrame(index=d.index)
+            for w in VWX:
+                f[f"fc_today_{w}"] = v.get(f"{w}_lead1")
+                lead = f"{w}_lead{h + 1}"
+                f[f"fc_target_{w}"] = v[lead].shift(-h) if lead in v else np.nan
         out.append(f)
     return pd.concat(out).rename_axis("date").reset_index()
 
@@ -111,11 +129,11 @@ class ChangeModel(RegressorMixin, BaseEstimator):
     AQI moves slowly from one day to the next; predicting the level directly lost to plain persistence.
     """
 
-    def __init__(self, make=ridge, cols=tuple(FEATURES)):
-        self.make, self.cols = make, cols
+    def __init__(self, make=ridge, cols=tuple(FEATURES), need=()):
+        self.make, self.cols, self.need = make, cols, need  # `need`: train only on rows that have these columns
 
     def fit(self, X, y):
-        known = X["aqi"].notna().to_numpy()
+        known = (X["aqi"].notna() & X[list(self.need)].notna().all(axis=1)).to_numpy()
         self.model_ = self.make().fit(X.loc[known, list(self.cols)], (y - X["aqi"])[known])
         return self
 
@@ -131,8 +149,19 @@ def explain(model: "ChangeModel", x: pd.DataFrame) -> pd.Series:
 
 
 TEST_FROM = pd.Timestamp("2025-10-01")  # walk-forward months start here; dense station data begins Feb 2025
-AIRAWARE = "AirAware: linear regression on the change"
+AIRAWARE = "AirAware: station history + weather forecasts as issued"
+HISTORY_ONLY = "Station history only (no weather, no CAMS)"
+OPTIMISTIC = "Upper bound: realized weather and CAMS (not available on the day)"
 PERSISTENCE = "Persistence (tomorrow = today)"
+FC = tuple(c for c in VINTAGE if c.startswith("fc_"))
+
+
+def served(h: int, vintage: bool = True) -> ChangeModel:
+    """The model the site uses for h days ahead: issued weather forecasts where the archive reaches (lead h + 1 <= 7),
+    otherwise station history only. Never inputs that were unknown on the day the forecast is made."""
+    if vintage and h + 1 <= MAX_LEAD:
+        return ChangeModel(cols=tuple(VINTAGE), need=FC)
+    return ChangeModel(cols=tuple(HISTORY))
 
 
 def train_rows(f: pd.DataFrame, start: pd.Timestamp, h: int) -> pd.DataFrame:
@@ -140,23 +169,26 @@ def train_rows(f: pd.DataFrame, start: pd.Timestamp, h: int) -> pd.DataFrame:
     return f[f["date"] + pd.Timedelta(days=h) <= start]
 
 
-def predict_month(tr: pd.DataFrame, te: pd.DataFrame) -> tuple[dict, ChangeModel]:
-    """Every method, trained only on `tr`, forecasting the rows of `te`."""
-    month = lambda df: (df["date"] + pd.Timedelta(days=1)).dt.month
-    seasonal = tr.assign(m=month(tr)).groupby(["city", "m"])["target"].mean()
-    city_mean = tr.groupby("city")["target"].mean()
-    preds = {
-        PERSISTENCE: te["aqi"].to_numpy(),
-        "7-day average": te["aqi_7d"].fillna(te["aqi"]).to_numpy(),
-        "Seasonal average (city, month)": seasonal.reindex(list(zip(te["city"], month(te)))).fillna(
-            te["city"].map(city_mean).set_axis(list(zip(te["city"], month(te))))).to_numpy(),
-    }
-    preds["Linear regression on the AQI level"] = ridge().fit(tr[FEATURES], tr["target"]).predict(te[FEATURES])
-    preds["Gradient boosting on the change"] = ChangeModel(gbm).fit(tr, tr["target"]).predict(te)
-    preds["AirAware without tomorrow's forecasts"] = ChangeModel(cols=tuple(TODAY)).fit(tr, tr["target"]).predict(te)
-    preds["AirAware without CAMS"] = ChangeModel(cols=tuple(c for c in FEATURES if not c.startswith("cams"))).fit(tr, tr["target"]).predict(te)
-    model = ChangeModel().fit(tr, tr["target"])
-    preds[AIRAWARE] = model.predict(te)
+def predict_month(tr: pd.DataFrame, te: pd.DataFrame, h: int, vintage: bool) -> tuple[dict, ChangeModel]:
+    """Every method, trained only on `tr`, forecasting exactly the rows of `te` (so all are scored on the same days)."""
+    model = served(h, vintage).fit(tr, tr["target"])
+    preds = {PERSISTENCE: te["aqi"].to_numpy(),
+             HISTORY_ONLY: ChangeModel(cols=tuple(HISTORY)).fit(tr, tr["target"]).predict(te),
+             OPTIMISTIC: ChangeModel().fit(tr, tr["target"]).predict(te),
+             AIRAWARE: model.predict(te)}
+    if h == 1:  # simple baselines and alternative learners, next day only
+        month = (te["date"] + pd.Timedelta(days=1)).dt.month
+        seasonal = tr.assign(m=(tr["date"] + pd.Timedelta(days=1)).dt.month).groupby(["city", "m"])["target"].mean()
+        city_mean = tr.groupby("city")["target"].mean()
+        keys = list(zip(te["city"], month))
+        preds["7-day average"] = te["aqi_7d"].fillna(te["aqi"]).to_numpy()
+        preds["Seasonal average (city, month)"] = seasonal.reindex(keys).to_numpy(dtype=float, copy=True)
+        missing = np.isnan(preds["Seasonal average (city, month)"])
+        preds["Seasonal average (city, month)"][missing] = te["city"].map(city_mean).to_numpy()[missing]
+        cols = list(model.cols)
+        rows = tr.dropna(subset=list(model.need)) if model.need else tr
+        preds["Linear regression on the AQI level"] = ridge().fit(rows[cols], rows["target"]).predict(te[cols])
+        preds["Gradient boosting on the change"] = ChangeModel(gbm, cols=model.cols, need=model.need).fit(tr, tr["target"]).predict(te)
     return preds, model
 
 
@@ -166,26 +198,37 @@ class Result:
     table: pd.DataFrame  # next-day metrics per method and city over all walk-forward months
     importance: pd.Series
     test: pd.DataFrame  # next-day test rows with the AirAware forecast, its 80% range and chance of a Poor day
-    horizons: pd.DataFrame  # MAE, 80%-range coverage and forecast count per days-ahead, AirAware and persistence
-    dm: tuple  # Diebold-Mariano (statistic, p) for next-day AirAware against persistence, absolute error
+    horizons: pd.DataFrame  # MAE, 80%-range coverage and forecast count per days-ahead and method
+    dm: tuple  # Diebold-Mariano (statistic, p), next-day AirAware against persistence, absolute error
     final: dict  # days ahead -> AirAware trained on every row, for live forecasts
     residuals: dict  # days ahead -> all walk-forward errors, for live ranges
+    dm_history: tuple = (float("nan"), float("nan"))  # same test, station-history-only model against persistence
+    vintage: bool = True  # whether archived issued forecasts were available (else AirAware = station history only)
 
     def model_for(self, day: pd.Timestamp) -> ChangeModel:
         return self.models[day.to_period("M").start_time]
 
 
-def train(daily: pd.DataFrame | None = None) -> Result:
+def dm_by_date(test: pd.DataFrame, a: str, b: str) -> tuple[float, float]:
+    """Diebold-Mariano on the daily mean absolute error across cities, so the Newey-West lags run along time and
+    never across the boundary between two cities' series."""
+    g = test.assign(la=(test["target"] - test[a]).abs(), lb=(test["target"] - test[b]).abs()).groupby("date")[["la", "lb"]].mean()
+    return dm_test(g["la"].to_numpy(), g["lb"].to_numpy())
+
+
+def train(daily: pd.DataFrame | None = None, vintage: pd.DataFrame | None = None) -> Result:
     """Walk-forward test: at the start of each month, retrain on everything whose target was already measured,
-    then forecast that month. Next day gets every method; 2-7 days ahead compare AirAware with persistence.
+    then forecast that month. Every method is scored on the same test rows at every horizon.
 
     The 80% range for a month comes from the errors of earlier walk-forward months only (in-sample errors until
     there are 60 of them), so its coverage on the test months is an honest check.
     """
     daily = load() if daily is None else daily
+    vintage = load_vintage() if vintage is None else vintage
+    has_vintage = vintage is not None and not vintage.empty
     models, imps, rows, horizon_rows, final, residuals = {}, [], [], [], {}, {}
     for h in HORIZONS:
-        f = features(daily, h).dropna(subset=["target"])
+        f = features(daily, h, vintage if has_vintage else None).dropna(subset=["target"])
         f = f[f["aqi"].notna() | (f["date"] < TEST_FROM)]  # test days need today's AQI; every method gets the same days
         parts, errors = [], []
         for m in pd.period_range(TEST_FROM, f["date"].max(), freq="M"):
@@ -193,15 +236,13 @@ def train(daily: pd.DataFrame | None = None) -> Result:
             te = f[(f["date"] >= m.start_time) & (f["date"] <= m.end_time)].copy()
             if te.empty:
                 continue
+            preds, model = predict_month(tr, te, h, has_vintage)
             if h == 1:
-                preds, model = predict_month(tr, te)
                 models[m.start_time] = model
-                imp = permutation_importance(model, te[FEATURES], te["target"], scoring="neg_mean_absolute_error", n_repeats=5, random_state=0)
-                imps.append(pd.Series(imp.importances_mean * len(te), index=FEATURES))
-            else:
-                model = ChangeModel().fit(tr, tr["target"])
-                preds = {PERSISTENCE: te["aqi"].to_numpy(), AIRAWARE: model.predict(te)}
-            known = tr[tr["aqi"].notna()]
+                cols = list(model.cols)
+                imp = permutation_importance(model, te[cols], te["target"], scoring="neg_mean_absolute_error", n_repeats=5, random_state=0)
+                imps.append(pd.Series(imp.importances_mean * len(te), index=cols))
+            known = model_rows(tr, model)
             past = errors if len(errors) >= 60 else list(known["target"] - model.predict(known))
             for name, p in preds.items():
                 te[name] = p
@@ -209,10 +250,12 @@ def train(daily: pd.DataFrame | None = None) -> Result:
             errors += list(te["target"] - te[AIRAWARE])
             parts.append(te)
         te = pd.concat(parts)
-        final[h], residuals[h] = ChangeModel().fit(f, f["target"]), np.array(errors)
-        for name in (AIRAWARE, PERSISTENCE):
+        final[h], residuals[h] = served(h, has_vintage).fit(f, f["target"]), np.array(errors)
+        for name in (AIRAWARE, HISTORY_ONLY, PERSISTENCE, OPTIMISTIC):
+            stat, p = dm_by_date(te, name, PERSISTENCE) if name != PERSISTENCE else (np.nan, np.nan)
             horizon_rows.append({"Days ahead": h, "Method": name, "MAE": mean_absolute_error(te["target"], te[name]),
-                                 "Forecasts": len(te), "80% range coverage": float(te["target"].between(te["lo"], te["hi"]).mean())})
+                                 "Forecasts": len(te), "80% range coverage": float(te["target"].between(te["lo"], te["hi"]).mean()),
+                                 "DM p vs persistence": p})
         if h == 1:
             test = te
             for name in preds:
@@ -220,23 +263,41 @@ def train(daily: pd.DataFrame | None = None) -> Result:
                     rows.append({"Method": name, "City": city, **scores(part["target"].to_numpy(), part[name].to_numpy())})
 
     test = test.sort_values(["city", "date"])
-    dm = dm_test((test["target"] - test[AIRAWARE]).abs(), (test["target"] - test[PERSISTENCE]).abs())
-    importance = (sum(imps) / len(test)).sort_values(ascending=False)
+    dm, dm_history = dm_by_date(test, AIRAWARE, PERSISTENCE), dm_by_date(test, HISTORY_ONLY, PERSISTENCE)
+    importance = (sum(i.fillna(0) for i in imps) / len(test)).sort_values(ascending=False)
     test = test.rename(columns={AIRAWARE: "predicted", PERSISTENCE: "persistence"})
     horizons = pd.DataFrame(horizon_rows)
-    horizons.loc[horizons["Method"] == PERSISTENCE, "80% range coverage"] = np.nan
-    return Result(models, pd.DataFrame(rows), importance, test, horizons, dm, final, residuals)
+    horizons.loc[horizons["Method"] != AIRAWARE, "80% range coverage"] = np.nan  # ranges belong to the served model
+    return Result(models, pd.DataFrame(rows), importance, test, horizons, dm, final, residuals, dm_history, has_vintage)
+
+
+def model_rows(f: pd.DataFrame, model: ChangeModel) -> pd.DataFrame:
+    """The rows a ChangeModel trains on: today's AQI known, plus whatever columns it needs."""
+    return f[f["aqi"].notna() & f[list(model.need)].notna().all(axis=1)]
+
+
+def as_vintage(daily: pd.DataFrame) -> pd.DataFrame:
+    """For live forecasts: the best weather known now (ERA5 for past days, the current forecast ahead) in the archive's
+    column layout. Nothing here is from the future; it is only fresher than the archived runs the model trained on."""
+    v = daily[["date", "city"]].copy()
+    for w in VWX:
+        for k in range(1, MAX_LEAD + 2):
+            v[f"{w}_lead{k}"] = daily[w]
+    return v
 
 
 def forecast_now(daily: pd.DataFrame, r: Result) -> pd.DataFrame:
     """Forecasts from each city's latest measured day, as far ahead as the weather forecast reaches."""
     out = []
+    live_wx = as_vintage(daily)
     for h in HORIZONS:
-        f = features(daily, h)
-        latest = f.loc[f[f["aqi"].notna()].groupby("city")["date"].idxmax()].dropna(subset=FORECAST)
+        f = features(daily, h, live_wx)
+        model = r.final[h]
+        need = [c for c in model.cols if c.startswith("fc_target_")]
+        latest = f.loc[f[f["aqi"].notna()].groupby("city")["date"].idxmax()].dropna(subset=need)
         if latest.empty:
             continue
-        pred = r.final[h].predict(latest)
+        pred = model.predict(latest)
         lo, hi, p_poor = interval(pred, r.residuals[h])
         out.append(pd.DataFrame({"city": latest["city"].to_numpy(), "made_from": latest["date"].to_numpy(),
                                  "date": (latest["date"] + pd.Timedelta(days=h)).to_numpy(), "days_ahead": h,
@@ -247,15 +308,30 @@ def forecast_now(daily: pd.DataFrame, r: Result) -> pd.DataFrame:
 def write_report(r: Result) -> str:
     both = r.table[r.table["City"] == "Both"].drop(columns="City").set_index("Method")
     per_city = r.table.pivot(index="Method", columns="City", values="MAE")[["Pune", "Mumbai"]]
+    t = r.test
+    hz = r.horizons.pivot(index="Days ahead", columns="Method", values="MAE")[[AIRAWARE, HISTORY_ONLY, PERSISTENCE, OPTIMISTIC]]
+    cov = r.horizons[r.horizons["Method"] == AIRAWARE].set_index("Days ahead")[["80% range coverage", "DM p vs persistence", "Forecasts"]]
+    served_text = ("station history plus weather forecasts **as they were issued** (Open-Meteo's archive of past runs; "
+                   "today's weather from the run issued a day earlier, the target day's from runs issued h + 1 days "
+                   "before it), and station history only at 7 days ahead, where no archived run is old enough"
+                   if r.vintage else "station history only (the archive of issued forecasts was not available)")
     md = (
-        f"# AirAware results\n\nWalk-forward test: at the start of each month from {TEST_FROM:%B %Y}, every method is retrained on "
-        f"everything before that month and forecasts it. {len(r.test)} city-day forecasts, up to "
-        f"{r.test['date'].max() + pd.Timedelta(days=1):%d %b %Y}. Lower MAE/RMSE is better.\n\n"
-        f"## Both cities\n\n{both.round(3).to_markdown()}\n\n## MAE by city\n\n{per_city.round(1).to_markdown()}\n\n"
-        f"Diebold-Mariano test, AirAware against persistence (absolute error, Newey-West 7 lags): "
-        f"statistic {r.dm[0]:.2f}, {p_text(r.dm[1])}.\n\n"
-        f"## Further ahead\n\n{r.horizons.pivot(index='Days ahead', columns='Method', values=['MAE', '80% range coverage']).dropna(axis=1, how='all').round(3).to_markdown()}\n\n"
-        f"## What the model relies on (permutation importance, MAE increase)\n\n{r.importance.head(12).round(2).rename("MAE increase").to_markdown()}\n"
+        f"# AirAware results\n\nGenerated by `python -m airaware.model`. Walk-forward test: at the start of each month from "
+        f"{TEST_FROM:%B %Y}, every method is retrained on the rows whose target had already been measured, then forecasts "
+        f"that month. Next day: {len(t)} city-day forecasts for {t['date'].min() + pd.Timedelta(days=1):%d %b %Y} to "
+        f"{t['date'].max() + pd.Timedelta(days=1):%d %b %Y}; every method is scored on exactly the same rows. Lower MAE/RMSE is better.\n\n"
+        f"**AirAware** (the model the site serves) uses {served_text}. "
+        f"**Station history only** uses the stations' AQI, PM2.5 and PM10 (today, the two days before, the 7-day mean), "
+        f"the calendar and the city: no weather and no CAMS at all, so it is the most conservative benchmark. "
+        f"**Upper bound** adds the realized (ERA5) weather and the CAMS analysis for the target day. Nobody has those on "
+        f"the day, and CAMS keeps no archive of its past forecasts, so this row only shows how much better the forecast "
+        f"could be with perfect weather and particle forecasts. It is not an estimate of live accuracy.\n\n"
+        f"## Next day, both cities\n\n{both.round(3).to_markdown()}\n\n## Next-day MAE by city\n\n{per_city.round(1).to_markdown()}\n\n"
+        f"Diebold-Mariano tests against persistence (absolute error, averaged over the two cities per day, Newey-West 7 lags): "
+        f"AirAware statistic {r.dm[0]:.2f}, {p_text(r.dm[1])}; station history only statistic {r.dm_history[0]:.2f}, {p_text(r.dm_history[1])}.\n\n"
+        f"## Further ahead (MAE)\n\n{hz.round(2).to_markdown()}\n\n"
+        f"## AirAware's 80% ranges and significance against persistence, by horizon\n\n{cov.round(3).to_markdown()}\n\n"
+        f"## What the next-day model relies on (permutation importance, MAE increase)\n\n{r.importance.head(12).round(2).rename('MAE increase').to_markdown()}\n"
     )
     REPORT.parent.mkdir(exist_ok=True)
     REPORT.write_text(md)

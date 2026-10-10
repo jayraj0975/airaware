@@ -54,7 +54,9 @@ def test_public_pages_and_api(app):
     far = app.get("/api/area?lat=18.6129&lon=74.5695")  # ~75 km east of Pune
     assert far.status_code == 404 and far.json()["detail"]["nearest_city"] == "Pune" and 60 < far.json()["detail"]["km"] < 90
     m = app.get("/api/model").json()
-    assert m["dm"]["p"] < 0.05 and len(m["horizons"]) == 14
+    # Four methods at each of 7 horizons, all on the same rows; significance is reported, never assumed.
+    assert len(m["horizons"]) == 28 and {h["Method"] for h in m["horizons"]} == {m["airaware"], m["persistence"], m["history_only"], m["optimistic"]}
+    assert 0 <= m["dm"]["p"] <= 1 and 0 <= m["dm_history"]["p"] <= 1 and m["vintage"] is True
     i = app.get("/api/insights?city=Mumbai").json()
     assert len(i["hourly"]) == 12 * 24 and i["cigarettes_year"] > 0 and len(i["weekday"]) == 7
     t = app.get("/api/track-record").json()
