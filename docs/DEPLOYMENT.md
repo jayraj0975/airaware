@@ -40,6 +40,18 @@ need a paid always-on instance plus a volume, and would be a second, different w
    ```
 4. Open `https://air.yourdomain.in`, sign in, and set up two-step sign-in to open the admin console.
 
+## Railway (the hosted option in use)
+
+Railway runs the same Dockerfile, always on, at a fixed address, and redeploys on every push to `main`.
+
+- Project `airaware`, service `airaware`, address `https://airaware-production-8299.up.railway.app` (port 8000).
+- A volume mounted at `/app/data` holds the database, refreshed data and backups. On first start the container
+  copies the starting data into the empty volume, makes it writable, then runs the server as an unprivileged user.
+- Variables: `AIRAWARE_PUBLIC_URL` (the address above), `AIRAWARE_SECURE_COOKIES=1`, `PORT=8000`. Rate limits work per
+  visitor only when `AIRAWARE_TRUSTED_PROXIES` names Railway's edge network and `AIRAWARE_CLIENT_IP_HEADER` names the
+  header it sets; until then every visitor shares one set of limits (safe, but strict).
+- Needs about 1 GB of memory while retraining, so plan for Railway's Hobby plan rather than the trial credit.
+
 ## Local development
 
 ```sh
