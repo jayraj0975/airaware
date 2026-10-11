@@ -235,6 +235,18 @@ def test_openaq_parsing(monkeypatch):
     assert len(df) == 1 and df.loc[0, "pm25"] == 45 and df.loc[0, "aqi"] == 75  # 999 error code dropped
 
 
+def test_openaq_skips_stations_silent_past_the_window(monkeypatch):
+    calls = []
+
+    def fake(url, params, headers=None):
+        calls.append(url)
+        return {"results": [{"datetimeLast": {"utc": "2022-07-07T04:45:00Z"}, "coordinates": {"latitude": 18.5, "longitude": 73.8},
+                             "sensors": [{"id": 11, "parameter": {"name": "pm25"}}]}]}
+    monkeypatch.setattr(live, "_json", fake)
+    assert live.openaq_latest({1: "Retired"}, key="k", pause=0).empty
+    assert calls == [f"{live.OPENAQ}/locations/1"]  # no sensor calls spent on a station with nothing recent
+
+
 def test_outbound_calls_are_throttled_and_cache_is_bounded(monkeypatch):
     calls = []
 

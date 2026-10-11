@@ -170,6 +170,9 @@ def openaq_latest(locations: dict[int, str], key: str | None = None, pause: floa
         try:
             meta = _json(f"{OPENAQ}/locations/{loc}", {}, headers)["results"][0]
             time.sleep(pause)
+            last_seen = (meta.get("datetimeLast") or {}).get("utc")
+            if last_seen and last_seen < since:
+                continue  # nothing in the window (a retired id, or the feed is paused): skip its sensor calls
             means = {}
             for sensor in meta.get("sensors", []):
                 param = sensor["parameter"]["name"]
