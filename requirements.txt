@@ -1,10 +1,10 @@
 fastapi==0.143.0
 httpx==0.28.1
-numpy==2.5.3
+numpy==2.5.4
 pandas==3.0.6
 pytest==9.1.1
 scikit-learn==1.9.1
-starlette==1.7.0
+starlette==1.8.0
 streamlit==1.65.0
 tabulate==0.10.0
 uvicorn==0.54.0
